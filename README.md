@@ -19,6 +19,21 @@ Data sources look up items by `id` or exact `name`. Resources support import by 
 - Lookup by name inspects at most 1,000 candidate rows. Use `id` when names are not unique.
 - Only GLPI 10.0 is supported. GLPI 11 is not supported yet.
 
+## Installation
+
+The provider is published on the [Terraform Registry](https://registry.terraform.io/providers/yoonhyunwoo/glpi/latest):
+
+```hcl
+terraform {
+  required_providers {
+    glpi = {
+      source  = "yoonhyunwoo/glpi"
+      version = "~> 0.1"
+    }
+  }
+}
+```
+
 ## Configuration
 
 ```hcl
