@@ -1,0 +1,5 @@
+/terraform-provider-glpi
+*.test
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate*

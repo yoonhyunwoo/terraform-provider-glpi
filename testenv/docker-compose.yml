@@ -1,0 +1,32 @@
+name: glpi-tfprovider-test
+
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      MYSQL_DATABASE: glpi
+      MYSQL_USER: glpi
+      MYSQL_PASSWORD: glpi
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uglpi -pglpi --silent"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  glpi:
+    image: glpi/glpi:${GLPI_VERSION:-10.0}
+    environment:
+      GLPI_DB_HOST: db
+      GLPI_DB_PORT: "3306"
+      GLPI_DB_NAME: glpi
+      GLPI_DB_USER: glpi
+      GLPI_DB_PASSWORD: glpi
+      GLPI_CRONTAB_ENABLED: "0"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${GLPI_PORT:-8088}:80"
