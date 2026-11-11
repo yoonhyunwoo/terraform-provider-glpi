@@ -27,7 +27,12 @@ sql -e "UPDATE glpi_configs SET value='1' WHERE context='core' AND name IN ('ena
 generate_token_through_glpi() {
   docker compose exec -T glpi php -r 'define("GLPI_ROOT","/var/www/glpi"); include "/var/www/glpi/inc/includes.php"; $u=new User(); $u->getFromDBbyName("glpi"); echo "TOKEN=".$u->getAuthToken("api_token", true)."\n";' 2>/dev/null | sed -n 's/^TOKEN=//p'
 }
-USER_TOKEN=$(generate_token_through_glpi)
+USER_TOKEN=""
+for _ in $(seq 1 20); do
+  USER_TOKEN=$(generate_token_through_glpi || true)
+  [ -n "$USER_TOKEN" ] && break
+  sleep 3
+done
 [ -n "$USER_TOKEN" ] || { echo "could not generate user token" >&2; exit 1; }
 
 code=""
