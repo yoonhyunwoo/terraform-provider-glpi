@@ -37,13 +37,13 @@ resource "glpi_location" "root" {
 }
 
 resource "glpi_location" "rack" {
-  name      = "tfacc-rack"
+  name      = "%[1]s-rack"
   parent_id = glpi_location.root.id
 }
 
 resource "glpi_computer" "c" {
-  name            = %q
-  serial          = %q
+  name            = %[1]q
+  serial          = %[2]q
   manufacturer_id = glpi_manufacturer.m.id
   location_id     = glpi_location.rack.id
 }
@@ -68,10 +68,10 @@ func TestAccComputer_lifecycle(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("glpi_computer.c", "serial", "SN-1"),
 					resource.TestCheckResourceAttrPair("glpi_computer.c", "manufacturer_id", "glpi_manufacturer.m", "id"),
-					resource.TestCheckResourceAttr("glpi_location.rack", "completename", "tfacc-dc > tfacc-rack"),
+					resource.TestCheckResourceAttr("glpi_location.rack", "completename", "tfacc-dc > tfacc-host-rack"),
 					resource.TestCheckResourceAttrPair("data.glpi_computer.by_name", "id", "glpi_computer.c", "id"),
 					resource.TestCheckResourceAttr("data.glpi_computer.by_name", "serial", "SN-1"),
-					resource.TestCheckResourceAttr("data.glpi_location.by_id", "name", "tfacc-rack"),
+					resource.TestCheckResourceAttr("data.glpi_location.by_id", "name", "tfacc-host-rack"),
 				),
 			},
 			{
@@ -79,6 +79,7 @@ func TestAccComputer_lifecycle(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("glpi_computer.c", "name", "tfacc-host-renamed"),
 					resource.TestCheckResourceAttr("glpi_computer.c", "serial", "SN-2"),
+					resource.TestCheckResourceAttr("glpi_location.rack", "completename", "tfacc-dc > tfacc-host-renamed-rack"),
 				),
 			},
 			{

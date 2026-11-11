@@ -82,6 +82,10 @@ func (d *itemDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 			resp.Diagnostics.AddError("Reading "+d.spec.itemtype, err.Error())
 			return
 		}
+		if isTrashed(item) {
+			resp.Diagnostics.AddError("Not found", fmt.Sprintf("%s %d is in the GLPI trash bin.", d.spec.itemtype, n))
+			return
+		}
 		itemID = n
 	} else {
 		found, err := d.client.FindByName(ctx, d.spec.itemtype, name.ValueString())
@@ -99,7 +103,12 @@ func (d *itemDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 			resp.Diagnostics.AddError("Ambiguous name", fmt.Sprintf("%d %s items are named %q; look up by id instead.", len(found), d.spec.itemtype, name.ValueString()))
 			return
 		}
-		n, err := item["id"].(json.Number).Int64()
+		num, ok := item["id"].(json.Number)
+		if !ok {
+			resp.Diagnostics.AddError("Unexpected GLPI response", "search result has no numeric id")
+			return
+		}
+		n, err := num.Int64()
 		if err != nil {
 			resp.Diagnostics.AddError("Unexpected GLPI response", err.Error())
 			return

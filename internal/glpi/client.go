@@ -24,7 +24,9 @@ type Config struct {
 	BaseURL   string // e.g. https://glpi.example.com/apirest.php
 	AppToken  string // optional
 	UserToken string
-	HTTP      *http.Client
+	// PurgeOnDestroy deletes permanently instead of moving items to GLPI's trash bin.
+	PurgeOnDestroy bool
+	HTTP           *http.Client
 }
 
 // Client talks to one GLPI instance and keeps a lazily created session.
@@ -87,9 +89,9 @@ func (c *Client) Update(ctx context.Context, itemtype string, id int64, input It
 	return checkBulk(out)
 }
 
-// Delete purges the item instead of moving it to the trash bin.
+// Delete moves the item to the trash bin, or purges it when PurgeOnDestroy is set.
 func (c *Client) Delete(ctx context.Context, itemtype string, id int64) error {
-	q := url.Values{"force_purge": {"true"}}
+	q := url.Values{"force_purge": {strconv.FormatBool(c.cfg.PurgeOnDestroy)}}
 	var out []map[string]any
 	if err := c.do(ctx, http.MethodDelete, "/"+itemtype+"/"+strconv.FormatInt(id, 10), q, nil, &out); err != nil {
 		return err

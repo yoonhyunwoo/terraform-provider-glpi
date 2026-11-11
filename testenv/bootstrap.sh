@@ -39,4 +39,5 @@ cat <<EOF
 export TF_ACC=1
 export GLPI_URL=http://127.0.0.1:${PORT}/apirest.php
 export GLPI_USER_TOKEN=${USER_TOKEN}
+export GLPI_PURGE_ON_DESTROY=true
 EOF

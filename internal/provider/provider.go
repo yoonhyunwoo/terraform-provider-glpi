@@ -21,6 +21,7 @@ type providerModel struct {
 	URL       types.String `tfsdk:"url"`
 	AppToken  types.String `tfsdk:"app_token"`
 	UserToken types.String `tfsdk:"user_token"`
+	Purge     types.Bool   `tfsdk:"purge_on_destroy"`
 }
 
 func New(version string) func() provider.Provider {
@@ -44,6 +45,10 @@ func (p *glpiProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 				Optional:    true,
 				Sensitive:   true,
 				Description: "API client App-Token. Falls back to GLPI_APP_TOKEN. Required only when the GLPI API client demands one.",
+			},
+			"purge_on_destroy": schema.BoolAttribute{
+				Optional:    true,
+				Description: "Permanently delete items on destroy instead of moving them to the GLPI trash bin (the default). Falls back to GLPI_PURGE_ON_DESTROY=true.",
 			},
 			"user_token": schema.StringAttribute{
 				Optional:    true,
@@ -88,7 +93,8 @@ func (p *glpiProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 		return
 	}
 
-	c := glpi.New(glpi.Config{BaseURL: url, AppToken: orEnv(cfg.AppToken, "GLPI_APP_TOKEN"), UserToken: user})
+	purge := cfg.Purge.ValueBool() || (cfg.Purge.IsNull() && os.Getenv("GLPI_PURGE_ON_DESTROY") == "true")
+	c := glpi.New(glpi.Config{BaseURL: url, AppToken: orEnv(cfg.AppToken, "GLPI_APP_TOKEN"), UserToken: user, PurgeOnDestroy: purge})
 	resp.ResourceData = c
 	resp.DataSourceData = c
 }

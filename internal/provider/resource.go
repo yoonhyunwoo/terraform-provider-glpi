@@ -52,10 +52,7 @@ func (r *itemResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
 			}
 		case f.readOnly:
-			attrs[f.tf] = schema.StringAttribute{
-				Computed: true, Description: f.desc,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
-			}
+			attrs[f.tf] = schema.StringAttribute{Computed: true, Description: f.desc}
 		default:
 			attrs[f.tf] = schema.StringAttribute{
 				Required: f.required, Optional: !f.required, Computed: !f.required,

@@ -13,7 +13,7 @@ Data sources look an item up by `id` or by exact `name`. Resources support impor
 
 Behavior to know:
 
-- Destroy purges the item (`force_purge=true`) instead of moving it to the GLPI trash bin. An item trashed outside Terraform counts as deleted.
+- Destroy moves the item to the GLPI trash bin, where it can be restored. Set `purge_on_destroy = true` (or `GLPI_PURGE_ON_DESTROY=true`) to delete permanently. An item trashed outside Terraform counts as deleted.
 - Optional attributes removed from the configuration keep their last value in GLPI.
 
 ## Configuration
@@ -23,6 +23,7 @@ provider "glpi" {
   url        = "https://glpi.example.com/apirest.php" # or GLPI_URL
   user_token = var.glpi_user_token                    # or GLPI_USER_TOKEN
   app_token  = var.glpi_app_token                     # optional, or GLPI_APP_TOKEN
+  # purge_on_destroy = true                           # permanent delete instead of trash bin
 }
 ```
 
