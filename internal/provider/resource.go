@@ -42,24 +42,23 @@ func (r *itemResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 		},
 	}
 	for _, f := range r.spec.fields {
-		switch {
-		case f.kind == kindInt && f.readOnly:
-			attrs[f.tf] = schema.Int64Attribute{Computed: true, Description: f.desc}
-		case f.kind == kindInt:
-			attrs[f.tf] = schema.Int64Attribute{
-				Required: f.required, Optional: !f.required, Computed: !f.required,
-				Description:   f.desc,
-				PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
+		// Read-only fields are computed by GLPI from other fields, so they must be recomputed on
+		// every change and never carry UseStateForUnknown.
+		optional := !f.required && !f.readOnly
+		computed := !f.required
+		if f.kind == kindInt {
+			a := schema.Int64Attribute{Required: f.required, Optional: optional, Computed: computed, Description: f.desc}
+			if optional {
+				a.PlanModifiers = []planmodifier.Int64{int64planmodifier.UseStateForUnknown()}
 			}
-		case f.readOnly:
-			attrs[f.tf] = schema.StringAttribute{Computed: true, Description: f.desc}
-		default:
-			attrs[f.tf] = schema.StringAttribute{
-				Required: f.required, Optional: !f.required, Computed: !f.required,
-				Description:   f.desc,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
-			}
+			attrs[f.tf] = a
+			continue
 		}
+		a := schema.StringAttribute{Required: f.required, Optional: optional, Computed: computed, Description: f.desc}
+		if optional {
+			a.PlanModifiers = []planmodifier.String{stringplanmodifier.UseStateForUnknown()}
+		}
+		attrs[f.tf] = a
 	}
 	resp.Schema = schema.Schema{
 		Description: r.spec.desc + " Optional attributes that are removed from the configuration keep their last value in GLPI.",
