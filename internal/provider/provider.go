@@ -1,11 +1,15 @@
-// Package provider implements the Terraform provider for GLPI.
 package provider
 
 import (
 	"context"
+	"errors"
+	"net"
+	"net/url"
 	"os"
+	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -44,26 +48,45 @@ func (p *glpiProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 			"app_token": schema.StringAttribute{
 				Optional:    true,
 				Sensitive:   true,
-				Description: "API client App-Token. Falls back to GLPI_APP_TOKEN. Required only when the GLPI API client demands one.",
+				Description: "API client App-Token. Falls back to GLPI_APP_TOKEN. Required only when configured in GLPI.",
 			},
 			"purge_on_destroy": schema.BoolAttribute{
 				Optional:    true,
-				Description: "Permanently delete items on destroy instead of moving them to the GLPI trash bin (the default). Falls back to GLPI_PURGE_ON_DESTROY=true.",
+				Description: "Permanently delete items on destroy instead of moving them to the GLPI trash bin. Falls back to GLPI_PURGE_ON_DESTROY=true.",
 			},
 			"user_token": schema.StringAttribute{
 				Optional:    true,
 				Sensitive:   true,
-				Description: "User API token (\"Remote access key\" in the user preferences). Falls back to GLPI_USER_TOKEN.",
+				Description: "User API token (\"Remote access key\" in user preferences). Falls back to GLPI_USER_TOKEN.",
 			},
 		},
 	}
 }
 
 func orEnv(v types.String, env string) string {
-	if !v.IsNull() && !v.IsUnknown() {
+	if !v.IsNull() && !v.IsUnknown() && v.ValueString() != "" {
 		return v.ValueString()
 	}
 	return os.Getenv(env)
+}
+
+func validateURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return errors.New("must be an absolute http(s) URL such as https://glpi.example.com/apirest.php")
+	}
+	if u.User != nil {
+		return errors.New("must not contain credentials; use user_token")
+	}
+	return nil
+}
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (p *glpiProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
@@ -72,31 +95,68 @@ func (p *glpiProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	for name, v := range map[string]types.String{"url": cfg.URL, "app_token": cfg.AppToken, "user_token": cfg.UserToken} {
-		if v.IsUnknown() {
-			resp.Diagnostics.AddAttributeError(path.Root(name), "Unknown value", "The value must be known at configuration time.")
-		}
-	}
+	rejectUnknown(&resp.Diagnostics, cfg)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	url := orEnv(cfg.URL, "GLPI_URL")
+	baseURL := resolveURL(&resp.Diagnostics, cfg.URL)
 	user := orEnv(cfg.UserToken, "GLPI_USER_TOKEN")
-	if url == "" {
-		resp.Diagnostics.AddAttributeError(path.Root("url"), "Missing GLPI URL", "Set url or the GLPI_URL environment variable.")
-	}
 	if user == "" {
 		resp.Diagnostics.AddAttributeError(path.Root("user_token"), "Missing user token", "Set user_token or the GLPI_USER_TOKEN environment variable.")
 	}
+	purge := resolvePurge(&resp.Diagnostics, cfg.Purge)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	purge := cfg.Purge.ValueBool() || (cfg.Purge.IsNull() && os.Getenv("GLPI_PURGE_ON_DESTROY") == "true")
-	c := glpi.New(glpi.Config{BaseURL: url, AppToken: orEnv(cfg.AppToken, "GLPI_APP_TOKEN"), UserToken: user, PurgeOnDestroy: purge})
+	c := glpi.New(glpi.Config{BaseURL: baseURL, AppToken: orEnv(cfg.AppToken, "GLPI_APP_TOKEN"), UserToken: user, PurgeOnDestroy: purge})
 	resp.ResourceData = c
 	resp.DataSourceData = c
+}
+
+func rejectUnknown(diags *diag.Diagnostics, cfg providerModel) {
+	for name, unknown := range map[string]bool{
+		"url":              cfg.URL.IsUnknown(),
+		"app_token":        cfg.AppToken.IsUnknown(),
+		"user_token":       cfg.UserToken.IsUnknown(),
+		"purge_on_destroy": cfg.Purge.IsUnknown(),
+	} {
+		if unknown {
+			diags.AddAttributeError(path.Root(name), "Unknown value", "The value must be known at configuration time.")
+		}
+	}
+}
+
+func resolveURL(diags *diag.Diagnostics, configured types.String) string {
+	baseURL := orEnv(configured, "GLPI_URL")
+	if baseURL == "" {
+		diags.AddAttributeError(path.Root("url"), "Missing GLPI URL", "Set url or the GLPI_URL environment variable.")
+		return ""
+	}
+	if err := validateURL(baseURL); err != nil {
+		diags.AddAttributeError(path.Root("url"), "Invalid GLPI URL", err.Error())
+		return ""
+	}
+	if u, _ := url.Parse(baseURL); u.Scheme == "http" && !isLoopback(u.Hostname()) {
+		diags.AddAttributeWarning(path.Root("url"), "Unencrypted GLPI URL", "The user token is sent over plain HTTP. Use https.")
+	}
+	return baseURL
+}
+
+func resolvePurge(diags *diag.Diagnostics, configured types.Bool) bool {
+	if !configured.IsNull() {
+		return configured.ValueBool()
+	}
+	env := os.Getenv("GLPI_PURGE_ON_DESTROY")
+	if env == "" {
+		return false
+	}
+	purge, err := strconv.ParseBool(env)
+	if err != nil {
+		diags.AddError("Invalid GLPI_PURGE_ON_DESTROY", err.Error())
+	}
+	return purge
 }
 
 func (p *glpiProvider) Resources(context.Context) []func() resource.Resource {

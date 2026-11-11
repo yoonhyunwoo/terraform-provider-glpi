@@ -2,12 +2,11 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
@@ -16,7 +15,6 @@ import (
 
 var _ datasource.DataSourceWithConfigure = (*itemDataSource)(nil)
 
-// itemDataSource looks one item up by id or by exact name.
 type itemDataSource struct {
 	spec   itemSpec
 	client *glpi.Client
@@ -34,7 +32,7 @@ func (d *itemDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, r
 		optional := f.tf == "name"
 		desc := f.desc
 		if optional {
-			desc += " Set id or name; the name must match exactly one item."
+			desc += " Set id or name; must match exactly one item."
 		}
 		if f.kind == kindInt {
 			attrs[f.tf] = schema.Int64Attribute{Optional: optional, Computed: true, Description: desc}
@@ -42,7 +40,7 @@ func (d *itemDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, r
 			attrs[f.tf] = schema.StringAttribute{Optional: optional, Computed: true, Description: desc}
 		}
 	}
-	resp.Schema = schema.Schema{Description: "Looks up " + d.spec.desc, Attributes: attrs}
+	resp.Schema = schema.Schema{Description: "Look up a " + d.spec.desc, Attributes: attrs}
 }
 
 func (d *itemDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
@@ -64,56 +62,57 @@ func (d *itemDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	hasID, hasName := !id.IsNull(), !name.IsNull()
-	if hasID == hasName {
+	if id.IsNull() == name.IsNull() {
 		resp.Diagnostics.AddError("Invalid lookup", "Set exactly one of id or name.")
 		return
 	}
 
 	var item glpi.Item
-	var itemID int64
-	if hasID {
-		n, err := strconv.ParseInt(id.ValueString(), 10, 64)
-		if err != nil {
-			resp.Diagnostics.AddAttributeError(path.Root("id"), "Invalid ID", err.Error())
-			return
-		}
-		if item, err = d.client.Get(ctx, d.spec.itemtype, n); err != nil {
-			resp.Diagnostics.AddError("Reading "+d.spec.itemtype, err.Error())
-			return
-		}
-		if isTrashed(item) {
-			resp.Diagnostics.AddError("Not found", fmt.Sprintf("%s %d is in the GLPI trash bin.", d.spec.itemtype, n))
-			return
-		}
-		itemID = n
+	var diags diag.Diagnostics
+	if !id.IsNull() {
+		item, diags = d.byID(ctx, id.ValueString())
 	} else {
-		found, err := d.client.FindByName(ctx, d.spec.itemtype, name.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("Searching "+d.spec.itemtype, err.Error())
-			return
-		}
-		switch len(found) {
-		case 0:
-			resp.Diagnostics.AddError("Not found", fmt.Sprintf("No %s named %q.", d.spec.itemtype, name.ValueString()))
-			return
-		case 1:
-			item = found[0]
-		default:
-			resp.Diagnostics.AddError("Ambiguous name", fmt.Sprintf("%d %s items are named %q; look up by id instead.", len(found), d.spec.itemtype, name.ValueString()))
-			return
-		}
-		num, ok := item["id"].(json.Number)
-		if !ok {
-			resp.Diagnostics.AddError("Unexpected GLPI response", "search result has no numeric id")
-			return
-		}
-		n, err := num.Int64()
-		if err != nil {
-			resp.Diagnostics.AddError("Unexpected GLPI response", err.Error())
-			return
-		}
-		itemID = n
+		item, diags = d.byName(ctx, name.ValueString())
 	}
-	resp.Diagnostics.Append(d.spec.setState(ctx, resp.State.SetAttribute, itemID, item)...)
+	resp.Diagnostics.Append(diags...)
+	if diags.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(d.spec.setState(ctx, resp.State.SetAttribute, item)...)
+}
+
+func (d *itemDataSource) byID(ctx context.Context, raw string) (glpi.Item, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	id, err := parseID(raw)
+	if err != nil {
+		diags.AddAttributeError(path.Root("id"), "Invalid ID", err.Error())
+		return nil, diags
+	}
+	item, err := d.client.Get(ctx, d.spec.itemtype, id)
+	if err != nil {
+		diags.AddError("Reading "+d.spec.itemtype, err.Error())
+		return nil, diags
+	}
+	if isTrashed(item) {
+		diags.AddError("Not found", fmt.Sprintf("%s %d is in the GLPI trash bin.", d.spec.itemtype, id))
+	}
+	return item, diags
+}
+
+func (d *itemDataSource) byName(ctx context.Context, name string) (glpi.Item, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	found, err := d.client.FindByName(ctx, d.spec.itemtype, name)
+	if err != nil {
+		diags.AddError("Searching "+d.spec.itemtype, err.Error())
+		return nil, diags
+	}
+	switch len(found) {
+	case 0:
+		diags.AddError("Not found", fmt.Sprintf("No %s named %q.", d.spec.itemtype, name))
+		return nil, diags
+	case 1:
+		return found[0], diags
+	}
+	diags.AddError("Ambiguous name", fmt.Sprintf("%d %s items are named %q; look up by id instead.", len(found), d.spec.itemtype, name))
+	return nil, diags
 }

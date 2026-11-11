@@ -3,7 +3,9 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"html"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -14,15 +16,6 @@ import (
 	"github.com/yoonhyunwoo/terraform-provider-glpi/internal/glpi"
 )
 
-func (f field) attrType() attr.Type {
-	if f.kind == kindInt {
-		return types.Int64Type
-	}
-	return types.StringType
-}
-
-// stateValue converts a GLPI JSON value to the Terraform value for f. GLPI returns null for
-// unset strings and sometimes quotes integers, so both are normalised.
 func (f field) stateValue(v any) (attr.Value, error) {
 	if f.kind == kindInt {
 		switch n := v.(type) {
@@ -44,14 +37,13 @@ func (f field) stateValue(v any) (attr.Value, error) {
 	case nil:
 		return types.StringValue(""), nil
 	case string:
-		return types.StringValue(s), nil
+		return types.StringValue(html.UnescapeString(s)), nil
 	case json.Number:
 		return types.StringValue(s.String()), nil
 	}
 	return nil, fmt.Errorf("field %s: unexpected %T", f.api, v)
 }
 
-// apiInput builds the GLPI payload from known, non-null values read through get.
 func (s itemSpec) apiInput(ctx context.Context, get func(context.Context, path.Path, any) diag.Diagnostics) (glpi.Item, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	in := glpi.Item{}
@@ -77,8 +69,21 @@ func (s itemSpec) apiInput(ctx context.Context, get func(context.Context, path.P
 	return in, diags
 }
 
-// setState writes id and every field of item through set.
-func (s itemSpec) setState(ctx context.Context, set func(context.Context, path.Path, any) diag.Diagnostics, id int64, item glpi.Item) diag.Diagnostics {
+func itemID(item glpi.Item) (int64, error) {
+	n, ok := item["id"].(json.Number)
+	if !ok {
+		return 0, errors.New("GLPI response has no numeric id")
+	}
+	return n.Int64()
+}
+
+func (s itemSpec) setState(ctx context.Context, set func(context.Context, path.Path, any) diag.Diagnostics, item glpi.Item) diag.Diagnostics {
+	id, err := itemID(item)
+	if err != nil {
+		var diags diag.Diagnostics
+		diags.AddError("Unexpected GLPI response", err.Error())
+		return diags
+	}
 	diags := set(ctx, path.Root("id"), strconv.FormatInt(id, 10))
 	for _, f := range s.fields {
 		v, err := f.stateValue(item[f.api])
@@ -91,12 +96,27 @@ func (s itemSpec) setState(ctx context.Context, set func(context.Context, path.P
 	return diags
 }
 
-// isTrashed reports whether GLPI moved the item to the trash bin.
 func isTrashed(item glpi.Item) bool {
-	n, ok := item["is_deleted"].(json.Number)
-	if !ok {
-		return false
+	switch v := item["is_deleted"].(type) {
+	case json.Number:
+		i, _ := v.Int64()
+		return i != 0
+	case string:
+		return v != "" && v != "0"
+	case bool:
+		return v
 	}
-	i, _ := n.Int64()
-	return i != 0
+	return false
+}
+
+func isGone(item glpi.Item, err error) bool {
+	return glpi.IsNotFound(err) || (err == nil && isTrashed(item))
+}
+
+func parseID(s string) (int64, error) {
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n <= 0 || strconv.FormatInt(n, 10) != s {
+		return 0, fmt.Errorf("%q is not a positive integer GLPI ID", s)
+	}
+	return n, nil
 }

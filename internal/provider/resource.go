@@ -23,7 +23,6 @@ var (
 	_ resource.ResourceWithImportState = (*itemResource)(nil)
 )
 
-// itemResource is one generic CRUD implementation shared by every itemtype in itemSpecs.
 type itemResource struct {
 	spec   itemSpec
 	client *glpi.Client
@@ -42,27 +41,24 @@ func (r *itemResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 		},
 	}
 	for _, f := range r.spec.fields {
-		switch {
-		case f.kind == kindInt && f.readOnly:
-			attrs[f.tf] = schema.Int64Attribute{Computed: true, Description: f.desc}
-		case f.kind == kindInt:
-			attrs[f.tf] = schema.Int64Attribute{
-				Required: f.required, Optional: !f.required, Computed: !f.required,
-				Description:   f.desc,
-				PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
+		optional := !f.required && !f.readOnly
+		computed := !f.required
+		if f.kind == kindInt {
+			a := schema.Int64Attribute{Required: f.required, Optional: optional, Computed: computed, Description: f.desc}
+			if optional {
+				a.PlanModifiers = []planmodifier.Int64{int64planmodifier.UseStateForUnknown()}
 			}
-		case f.readOnly:
-			attrs[f.tf] = schema.StringAttribute{Computed: true, Description: f.desc}
-		default:
-			attrs[f.tf] = schema.StringAttribute{
-				Required: f.required, Optional: !f.required, Computed: !f.required,
-				Description:   f.desc,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
-			}
+			attrs[f.tf] = a
+			continue
 		}
+		a := schema.StringAttribute{Required: f.required, Optional: optional, Computed: computed, Description: f.desc}
+		if optional {
+			a.PlanModifiers = []planmodifier.String{stringplanmodifier.UseStateForUnknown()}
+		}
+		attrs[f.tf] = a
 	}
 	resp.Schema = schema.Schema{
-		Description: r.spec.desc + " Optional attributes that are removed from the configuration keep their last value in GLPI.",
+		Description: r.spec.desc,
 		Attributes:  attrs,
 	}
 }
@@ -90,24 +86,18 @@ func (r *itemResource) Create(ctx context.Context, req resource.CreateRequest, r
 		resp.Diagnostics.AddError("Creating "+r.spec.itemtype, err.Error())
 		return
 	}
-	// Persist the ID first so a failing read-back leaves a tainted resource instead of an orphan.
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), strconv.FormatInt(id, 10))...)
+
+	resp.Diagnostics.Append(rememberCreatedID(ctx, &resp.State, id)...)
 	r.refresh(ctx, id, &resp.State, &resp.Diagnostics)
 }
 
 func (r *itemResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var idStr types.String
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("id"), &idStr)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	id, err := strconv.ParseInt(idStr.ValueString(), 10, 64)
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid ID", err.Error())
+	id, ok := stateID(ctx, req.State, &resp.Diagnostics)
+	if !ok {
 		return
 	}
 	item, err := r.client.Get(ctx, r.spec.itemtype, id)
-	if glpi.IsNotFound(err) || (err == nil && isTrashed(item)) {
+	if isGone(item, err) {
 		resp.State.RemoveResource(ctx)
 		return
 	}
@@ -115,20 +105,17 @@ func (r *itemResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		resp.Diagnostics.AddError("Reading "+r.spec.itemtype, err.Error())
 		return
 	}
-	resp.Diagnostics.Append(r.spec.setState(ctx, resp.State.SetAttribute, id, item)...)
+	resp.Diagnostics.Append(r.spec.setState(ctx, resp.State.SetAttribute, item)...)
 }
 
 func (r *itemResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var idStr types.String
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("id"), &idStr)...)
+	id, ok := stateID(ctx, req.State, &resp.Diagnostics)
+	if !ok {
+		return
+	}
 	input, diags := r.spec.apiInput(ctx, req.Plan.GetAttribute)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
-		return
-	}
-	id, err := strconv.ParseInt(idStr.ValueString(), 10, 64)
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid ID", err.Error())
 		return
 	}
 	if err := r.client.Update(ctx, r.spec.itemtype, id, input); err != nil {
@@ -139,35 +126,50 @@ func (r *itemResource) Update(ctx context.Context, req resource.UpdateRequest, r
 }
 
 func (r *itemResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var idStr types.String
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("id"), &idStr)...)
-	if resp.Diagnostics.HasError() {
+	id, ok := stateID(ctx, req.State, &resp.Diagnostics)
+	if !ok {
 		return
 	}
-	id, err := strconv.ParseInt(idStr.ValueString(), 10, 64)
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid ID", err.Error())
-		return
-	}
-	if err := r.client.Delete(ctx, r.spec.itemtype, id); err != nil && !glpi.IsNotFound(err) {
+	if err := r.client.Delete(ctx, r.spec.itemtype, id); err != nil {
+
+		if item, gerr := r.client.Get(ctx, r.spec.itemtype, id); isGone(item, gerr) {
+			return
+		}
 		resp.Diagnostics.AddError("Deleting "+r.spec.itemtype, err.Error())
 	}
 }
 
 func (r *itemResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if _, err := strconv.ParseInt(req.ID, 10, 64); err != nil {
-		resp.Diagnostics.AddError("Invalid import ID", "GLPI IDs are integers: "+req.ID)
+	if _, err := parseID(req.ID); err != nil {
+		resp.Diagnostics.AddError("Invalid import ID", err.Error())
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
 }
 
-// refresh reads the item back so computed attributes reflect what GLPI stored.
+func stateID(ctx context.Context, state tfsdk.State, diags *diag.Diagnostics) (int64, bool) {
+	var s types.String
+	diags.Append(state.GetAttribute(ctx, path.Root("id"), &s)...)
+	if diags.HasError() {
+		return 0, false
+	}
+	id, err := parseID(s.ValueString())
+	if err != nil {
+		diags.AddError("Invalid ID", err.Error())
+		return 0, false
+	}
+	return id, true
+}
+
+func rememberCreatedID(ctx context.Context, state *tfsdk.State, id int64) diag.Diagnostics {
+	return state.SetAttribute(ctx, path.Root("id"), strconv.FormatInt(id, 10))
+}
+
 func (r *itemResource) refresh(ctx context.Context, id int64, state *tfsdk.State, diags *diag.Diagnostics) {
 	item, err := r.client.Get(ctx, r.spec.itemtype, id)
 	if err != nil {
 		diags.AddError("Reading "+r.spec.itemtype+" after write", err.Error())
 		return
 	}
-	diags.Append(r.spec.setState(ctx, state.SetAttribute, id, item)...)
+	diags.Append(r.spec.setState(ctx, state.SetAttribute, item)...)
 }
