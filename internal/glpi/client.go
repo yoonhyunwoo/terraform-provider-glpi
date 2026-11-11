@@ -206,7 +206,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return err
 	}
 	tok, err := c.attempt(ctx, method, path, query, payload, out, "")
-	if isUnauthorized(err) {
+	if tok != "" && isUnauthorized(err) {
 		_, err = c.attempt(ctx, method, path, query, payload, out, tok)
 	}
 	return err

@@ -101,6 +101,20 @@ func TestInitSessionRejectsEmptyToken(t *testing.T) {
 	}
 }
 
+func TestRejectedUserTokenIsTriedOnce(t *testing.T) {
+	var inits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inits.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`["ERROR_GLPI_LOGIN","bad token"]`))
+	}))
+	defer srv.Close()
+	_, err := New(Config{BaseURL: srv.URL, UserToken: "u"}).Get(context.Background(), "Computer", 1)
+	if err == nil || inits.Load() != 1 {
+		t.Fatalf("want one failed login, got %d attempts, err %v", inits.Load(), err)
+	}
+}
+
 func TestClientDoesNotFollowRedirects(t *testing.T) {
 	var followed atomic.Bool
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
