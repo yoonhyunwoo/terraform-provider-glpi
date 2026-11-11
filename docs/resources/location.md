@@ -3,12 +3,12 @@
 page_title: "glpi_location Resource - glpi"
 subcategory: ""
 description: |-
-  A GLPI location. Locations form a tree through parent_id. Optional attributes that are removed from the configuration keep their last value in GLPI.
+  GLPI location.
 ---
 
 # glpi_location (Resource)
 
-A GLPI location. Locations form a tree through parent_id. Optional attributes that are removed from the configuration keep their last value in GLPI.
+GLPI location.
 
 ## Example Usage
 

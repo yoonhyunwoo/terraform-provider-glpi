@@ -41,7 +41,6 @@ func (r *itemResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 		},
 	}
 	for _, f := range r.spec.fields {
-
 		optional := !f.required && !f.readOnly
 		computed := !f.required
 		if f.kind == kindInt {
@@ -59,7 +58,7 @@ func (r *itemResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 		attrs[f.tf] = a
 	}
 	resp.Schema = schema.Schema{
-		Description: r.spec.desc + " Optional attributes that are removed from the configuration keep their last value in GLPI.",
+		Description: r.spec.desc,
 		Attributes:  attrs,
 	}
 }

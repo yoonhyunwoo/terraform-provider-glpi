@@ -38,7 +38,7 @@ variable "glpi_user_token" {
 
 ### Optional
 
-- `app_token` (String, Sensitive) API client App-Token. Falls back to GLPI_APP_TOKEN. Required only when the GLPI API client demands one.
-- `purge_on_destroy` (Boolean) Permanently delete items on destroy instead of moving them to the GLPI trash bin (the default). Falls back to GLPI_PURGE_ON_DESTROY=true.
+- `app_token` (String, Sensitive) API client App-Token. Falls back to GLPI_APP_TOKEN. Required only when configured in GLPI.
+- `purge_on_destroy` (Boolean) Permanently delete items on destroy instead of moving them to the GLPI trash bin. Falls back to GLPI_PURGE_ON_DESTROY=true.
 - `url` (String) Base URL of the API, e.g. https://glpi.example.com/apirest.php. Falls back to GLPI_URL.
-- `user_token` (String, Sensitive) User API token ("Remote access key" in the user preferences). Falls back to GLPI_USER_TOKEN.
+- `user_token` (String, Sensitive) User API token ("Remote access key" in user preferences). Falls back to GLPI_USER_TOKEN.

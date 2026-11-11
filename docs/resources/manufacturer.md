@@ -3,12 +3,12 @@
 page_title: "glpi_manufacturer Resource - glpi"
 subcategory: ""
 description: |-
-  A GLPI manufacturer. Optional attributes that are removed from the configuration keep their last value in GLPI.
+  GLPI manufacturer.
 ---
 
 # glpi_manufacturer (Resource)
 
-A GLPI manufacturer. Optional attributes that are removed from the configuration keep their last value in GLPI.
+GLPI manufacturer.
 
 ## Example Usage
 

@@ -48,16 +48,16 @@ func (p *glpiProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 			"app_token": schema.StringAttribute{
 				Optional:    true,
 				Sensitive:   true,
-				Description: "API client App-Token. Falls back to GLPI_APP_TOKEN. Required only when the GLPI API client demands one.",
+				Description: "API client App-Token. Falls back to GLPI_APP_TOKEN. Required only when configured in GLPI.",
 			},
 			"purge_on_destroy": schema.BoolAttribute{
 				Optional:    true,
-				Description: "Permanently delete items on destroy instead of moving them to the GLPI trash bin (the default). Falls back to GLPI_PURGE_ON_DESTROY=true.",
+				Description: "Permanently delete items on destroy instead of moving them to the GLPI trash bin. Falls back to GLPI_PURGE_ON_DESTROY=true.",
 			},
 			"user_token": schema.StringAttribute{
 				Optional:    true,
 				Sensitive:   true,
-				Description: "User API token (\"Remote access key\" in the user preferences). Falls back to GLPI_USER_TOKEN.",
+				Description: "User API token (\"Remote access key\" in user preferences). Falls back to GLPI_USER_TOKEN.",
 			},
 		},
 	}

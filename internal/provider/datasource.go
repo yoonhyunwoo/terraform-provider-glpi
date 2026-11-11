@@ -32,7 +32,7 @@ func (d *itemDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, r
 		optional := f.tf == "name"
 		desc := f.desc
 		if optional {
-			desc += " Set id or name; the name must match exactly one item."
+			desc += " Set id or name; must match exactly one item."
 		}
 		if f.kind == kindInt {
 			attrs[f.tf] = schema.Int64Attribute{Optional: optional, Computed: true, Description: desc}
@@ -40,7 +40,7 @@ func (d *itemDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, r
 			attrs[f.tf] = schema.StringAttribute{Optional: optional, Computed: true, Description: desc}
 		}
 	}
-	resp.Schema = schema.Schema{Description: "Looks up " + d.spec.desc, Attributes: attrs}
+	resp.Schema = schema.Schema{Description: "Look up a " + d.spec.desc, Attributes: attrs}
 }
 
 func (d *itemDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {

@@ -3,12 +3,12 @@
 page_title: "glpi_manufacturer Data Source - glpi"
 subcategory: ""
 description: |-
-  Looks up A GLPI manufacturer.
+  Look up a GLPI manufacturer.
 ---
 
 # glpi_manufacturer (Data Source)
 
-Looks up A GLPI manufacturer.
+Look up a GLPI manufacturer.
 
 ## Example Usage
 
@@ -28,7 +28,7 @@ data "glpi_manufacturer" "by_id" {
 ### Optional
 
 - `id` (String) GLPI numeric ID. Set id or name.
-- `name` (String) Name of the item. Set id or name; the name must match exactly one item.
+- `name` (String) Name of the item. Set id or name; must match exactly one item.
 
 ### Read-Only
 

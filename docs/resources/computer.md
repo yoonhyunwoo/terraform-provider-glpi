@@ -3,12 +3,12 @@
 page_title: "glpi_computer Resource - glpi"
 subcategory: ""
 description: |-
-  A GLPI computer asset. Optional attributes that are removed from the configuration keep their last value in GLPI.
+  GLPI computer asset.
 ---
 
 # glpi_computer (Resource)
 
-A GLPI computer asset. Optional attributes that are removed from the configuration keep their last value in GLPI.
+GLPI computer asset.
 
 ## Example Usage
 

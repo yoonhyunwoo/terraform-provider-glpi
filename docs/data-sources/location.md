@@ -3,12 +3,12 @@
 page_title: "glpi_location Data Source - glpi"
 subcategory: ""
 description: |-
-  Looks up A GLPI location. Locations form a tree through parent_id.
+  Look up a GLPI location.
 ---
 
 # glpi_location (Data Source)
 
-Looks up A GLPI location. Locations form a tree through parent_id.
+Look up a GLPI location.
 
 ## Example Usage
 
@@ -28,7 +28,7 @@ data "glpi_location" "by_id" {
 ### Optional
 
 - `id` (String) GLPI numeric ID. Set id or name.
-- `name` (String) Name of the item. Set id or name; the name must match exactly one item.
+- `name` (String) Name of the item. Set id or name; must match exactly one item.
 
 ### Read-Only
 

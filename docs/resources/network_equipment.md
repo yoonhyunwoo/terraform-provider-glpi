@@ -3,12 +3,12 @@
 page_title: "glpi_network_equipment Resource - glpi"
 subcategory: ""
 description: |-
-  A GLPI network equipment asset (switch, firewall, access point, ...). Optional attributes that are removed from the configuration keep their last value in GLPI.
+  GLPI network equipment asset (switch, firewall, access point).
 ---
 
 # glpi_network_equipment (Resource)
 
-A GLPI network equipment asset (switch, firewall, access point, ...). Optional attributes that are removed from the configuration keep their last value in GLPI.
+GLPI network equipment asset (switch, firewall, access point).
 
 ## Example Usage
 

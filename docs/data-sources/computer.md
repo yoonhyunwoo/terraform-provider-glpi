@@ -3,12 +3,12 @@
 page_title: "glpi_computer Data Source - glpi"
 subcategory: ""
 description: |-
-  Looks up A GLPI computer asset.
+  Look up a GLPI computer asset.
 ---
 
 # glpi_computer (Data Source)
 
-Looks up A GLPI computer asset.
+Look up a GLPI computer asset.
 
 ## Example Usage
 
@@ -28,7 +28,7 @@ data "glpi_computer" "by_id" {
 ### Optional
 
 - `id` (String) GLPI numeric ID. Set id or name.
-- `name` (String) Name of the item. Set id or name; the name must match exactly one item.
+- `name` (String) Name of the item. Set id or name; must match exactly one item.
 
 ### Read-Only
 

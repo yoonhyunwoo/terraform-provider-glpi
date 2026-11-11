@@ -53,19 +53,19 @@ var itemSpecs = []itemSpec{
 	{
 		itemtype: "Computer",
 		tfName:   "computer",
-		desc:     "A GLPI computer asset.",
+		desc:     "GLPI computer asset.",
 		fields:   assetFields("computertypes_id", "computermodels_id"),
 	},
 	{
 		itemtype: "NetworkEquipment",
 		tfName:   "network_equipment",
-		desc:     "A GLPI network equipment asset (switch, firewall, access point, ...).",
+		desc:     "GLPI network equipment asset (switch, firewall, access point).",
 		fields:   assetFields("networkequipmenttypes_id", "networkequipmentmodels_id"),
 	},
 	{
 		itemtype: "Location",
 		tfName:   "location",
-		desc:     "A GLPI location. Locations form a tree through parent_id.",
+		desc:     "GLPI location.",
 		fields: []field{
 			nameField,
 			commentField,
@@ -77,7 +77,7 @@ var itemSpecs = []itemSpec{
 	{
 		itemtype: "Manufacturer",
 		tfName:   "manufacturer",
-		desc:     "A GLPI manufacturer.",
+		desc:     "GLPI manufacturer.",
 		fields: []field{
 			nameField,
 			commentField,
