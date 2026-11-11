@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -97,43 +98,17 @@ func (p *glpiProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	for name, unknown := range map[string]bool{
-		"url":              cfg.URL.IsUnknown(),
-		"app_token":        cfg.AppToken.IsUnknown(),
-		"user_token":       cfg.UserToken.IsUnknown(),
-		"purge_on_destroy": cfg.Purge.IsUnknown(),
-	} {
-		if unknown {
-			resp.Diagnostics.AddAttributeError(path.Root(name), "Unknown value", "The value must be known at configuration time.")
-		}
-	}
+	rejectUnknown(&resp.Diagnostics, cfg)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	baseURL := orEnv(cfg.URL, "GLPI_URL")
+	baseURL := resolveURL(&resp.Diagnostics, cfg.URL)
 	user := orEnv(cfg.UserToken, "GLPI_USER_TOKEN")
-	if baseURL == "" {
-		resp.Diagnostics.AddAttributeError(path.Root("url"), "Missing GLPI URL", "Set url or the GLPI_URL environment variable.")
-	} else if err := validateURL(baseURL); err != nil {
-		resp.Diagnostics.AddAttributeError(path.Root("url"), "Invalid GLPI URL", err.Error())
-	} else if u, _ := url.Parse(baseURL); u.Scheme == "http" && !isLoopback(u.Hostname()) {
-		resp.Diagnostics.AddAttributeWarning(path.Root("url"), "Unencrypted GLPI URL", "The user token is sent over plain HTTP. Use https.")
-	}
 	if user == "" {
 		resp.Diagnostics.AddAttributeError(path.Root("user_token"), "Missing user token", "Set user_token or the GLPI_USER_TOKEN environment variable.")
 	}
-
-	purge := cfg.Purge.ValueBool()
-	if cfg.Purge.IsNull() {
-		if env := os.Getenv("GLPI_PURGE_ON_DESTROY"); env != "" {
-			b, err := strconv.ParseBool(env)
-			if err != nil {
-				resp.Diagnostics.AddError("Invalid GLPI_PURGE_ON_DESTROY", err.Error())
-			}
-			purge = b
-		}
-	}
+	purge := resolvePurge(&resp.Diagnostics, cfg.Purge)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -141,6 +116,53 @@ func (p *glpiProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 	c := glpi.New(glpi.Config{BaseURL: baseURL, AppToken: orEnv(cfg.AppToken, "GLPI_APP_TOKEN"), UserToken: user, PurgeOnDestroy: purge})
 	resp.ResourceData = c
 	resp.DataSourceData = c
+}
+
+func rejectUnknown(diags *diag.Diagnostics, cfg providerModel) {
+	for name, unknown := range map[string]bool{
+		"url":              cfg.URL.IsUnknown(),
+		"app_token":        cfg.AppToken.IsUnknown(),
+		"user_token":       cfg.UserToken.IsUnknown(),
+		"purge_on_destroy": cfg.Purge.IsUnknown(),
+	} {
+		if unknown {
+			diags.AddAttributeError(path.Root(name), "Unknown value", "The value must be known at configuration time.")
+		}
+	}
+}
+
+// resolveURL returns the configured or environment URL and reports a missing, malformed or
+// unencrypted one.
+func resolveURL(diags *diag.Diagnostics, configured types.String) string {
+	baseURL := orEnv(configured, "GLPI_URL")
+	if baseURL == "" {
+		diags.AddAttributeError(path.Root("url"), "Missing GLPI URL", "Set url or the GLPI_URL environment variable.")
+		return ""
+	}
+	if err := validateURL(baseURL); err != nil {
+		diags.AddAttributeError(path.Root("url"), "Invalid GLPI URL", err.Error())
+		return ""
+	}
+	if u, _ := url.Parse(baseURL); u.Scheme == "http" && !isLoopback(u.Hostname()) {
+		diags.AddAttributeWarning(path.Root("url"), "Unencrypted GLPI URL", "The user token is sent over plain HTTP. Use https.")
+	}
+	return baseURL
+}
+
+// resolvePurge prefers the configured flag and falls back to GLPI_PURGE_ON_DESTROY.
+func resolvePurge(diags *diag.Diagnostics, configured types.Bool) bool {
+	if !configured.IsNull() {
+		return configured.ValueBool()
+	}
+	env := os.Getenv("GLPI_PURGE_ON_DESTROY")
+	if env == "" {
+		return false
+	}
+	purge, err := strconv.ParseBool(env)
+	if err != nil {
+		diags.AddError("Invalid GLPI_PURGE_ON_DESTROY", err.Error())
+	}
+	return purge
 }
 
 func (p *glpiProvider) Resources(context.Context) []func() resource.Resource {

@@ -213,40 +213,49 @@ func (c *Client) sessionToken(ctx context.Context, stale string) (string, error)
 
 // do performs an authenticated call and retries once with a fresh session on 401.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
-	var payload []byte
-	if body != nil {
-		var err error
-		if payload, err = json.Marshal(body); err != nil {
-			return err
-		}
-	}
-	stale := ""
-	for attempt := 0; ; attempt++ {
-		tok, err := c.sessionToken(ctx, stale)
-		if err != nil {
-			return err
-		}
-		u := c.cfg.BaseURL + path
-		if len(query) > 0 {
-			u += "?" + query.Encode()
-		}
-		req, err := http.NewRequestWithContext(ctx, method, u, bytes.NewReader(payload))
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Session-Token", tok)
-		if c.cfg.AppToken != "" {
-			req.Header.Set("App-Token", c.cfg.AppToken)
-		}
-		err = c.send(req, out)
-		var apiErr *APIError
-		if attempt == 0 && errors.As(err, &apiErr) && apiErr.Status == http.StatusUnauthorized {
-			stale = tok
-			continue
-		}
+	payload, err := marshalBody(body)
+	if err != nil {
 		return err
 	}
+	tok, err := c.attempt(ctx, method, path, query, payload, out, "")
+	if isUnauthorized(err) {
+		_, err = c.attempt(ctx, method, path, query, payload, out, tok)
+	}
+	return err
+}
+
+func marshalBody(body any) ([]byte, error) {
+	if body == nil {
+		return nil, nil
+	}
+	return json.Marshal(body)
+}
+
+func isUnauthorized(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusUnauthorized
+}
+
+// attempt sends one request with a session other than stale and returns the session it used.
+func (c *Client) attempt(ctx context.Context, method, path string, query url.Values, payload []byte, out any, stale string) (string, error) {
+	tok, err := c.sessionToken(ctx, stale)
+	if err != nil {
+		return "", err
+	}
+	u := c.cfg.BaseURL + path
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, bytes.NewReader(payload))
+	if err != nil {
+		return tok, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Session-Token", tok)
+	if c.cfg.AppToken != "" {
+		req.Header.Set("App-Token", c.cfg.AppToken)
+	}
+	return tok, c.send(req, out)
 }
 
 func (c *Client) send(req *http.Request, out any) error {
@@ -255,16 +264,25 @@ func (c *Client) send(req *http.Request, out any) error {
 		return err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	raw, err := readBody(resp.Body)
 	if err != nil {
 		return err
-	}
-	if len(raw) > maxResponseBytes {
-		return fmt.Errorf("glpi: response larger than %d bytes", maxResponseBytes)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return parseError(resp, raw)
 	}
+	return decodeJSON(raw, out)
+}
+
+func readBody(r io.Reader) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(r, maxResponseBytes+1))
+	if err == nil && len(raw) > maxResponseBytes {
+		err = fmt.Errorf("glpi: response larger than %d bytes", maxResponseBytes)
+	}
+	return raw, err
+}
+
+func decodeJSON(raw []byte, out any) error {
 	if out == nil || len(bytes.TrimSpace(raw)) == 0 {
 		return nil
 	}
