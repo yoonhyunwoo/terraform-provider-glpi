@@ -1,4 +1,3 @@
-// Package provider implements the Terraform provider for GLPI.
 package provider
 
 import (
@@ -64,7 +63,6 @@ func (p *glpiProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 	}
 }
 
-// orEnv prefers a non-empty configured value, so var.x defaulting to "" still falls back to the environment.
 func orEnv(v types.String, env string) string {
 	if !v.IsNull() && !v.IsUnknown() && v.ValueString() != "" {
 		return v.ValueString()
@@ -72,7 +70,6 @@ func orEnv(v types.String, env string) string {
 	return os.Getenv(env)
 }
 
-// validateURL never echoes the value, so credentials pasted into the URL cannot reach plan output.
 func validateURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
@@ -131,8 +128,6 @@ func rejectUnknown(diags *diag.Diagnostics, cfg providerModel) {
 	}
 }
 
-// resolveURL returns the configured or environment URL and reports a missing, malformed or
-// unencrypted one.
 func resolveURL(diags *diag.Diagnostics, configured types.String) string {
 	baseURL := orEnv(configured, "GLPI_URL")
 	if baseURL == "" {
@@ -149,7 +144,6 @@ func resolveURL(diags *diag.Diagnostics, configured types.String) string {
 	return baseURL
 }
 
-// resolvePurge prefers the configured flag and falls back to GLPI_PURGE_ON_DESTROY.
 func resolvePurge(diags *diag.Diagnostics, configured types.Bool) bool {
 	if !configured.IsNull() {
 		return configured.ValueBool()

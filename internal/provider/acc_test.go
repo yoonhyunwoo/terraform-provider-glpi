@@ -24,12 +24,11 @@ var protoV6Factories = map[string]func() (tfprotov6.ProviderServer, error){
 	"glpi": providerserver.NewProtocol6WithError(provider.New("test")()),
 }
 
-// Acceptance tests need a live GLPI: eval "$(testenv/bootstrap.sh)" sets TF_ACC, GLPI_URL and GLPI_USER_TOKEN.
 func preCheck(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{"GLPI_URL", "GLPI_USER_TOKEN"} {
 		if os.Getenv(k) == "" {
-			t.Fatalf("%s must be set for acceptance tests", k)
+			t.Fatalf(`%s must be set for acceptance tests: run eval "$(testenv/bootstrap.sh)"`, k)
 		}
 	}
 }
@@ -54,7 +53,6 @@ func isGone(item glpi.Item) bool {
 	return i != 0
 }
 
-// checkDestroy fails when a managed item still exists in GLPI outside the trash bin.
 func checkDestroy(s *terraform.State) error {
 	for key, rs := range s.RootModule().Resources {
 		itemtype, ok := itemtypes[rs.Type]
@@ -174,7 +172,6 @@ data "glpi_network_equipment" "by_name" {
 	})
 }
 
-// A comment with characters GLPI may escape must round-trip without an inconsistent-result error.
 func TestAccManufacturer_specialCharacters(t *testing.T) {
 	name := acctest.RandomWithPrefix("tfacc") + " & <co>"
 	cfg := fmt.Sprintf(`
@@ -267,7 +264,6 @@ func TestAccImport_invalidID(t *testing.T) {
 	})
 }
 
-// Provider configuration errors need the Terraform CLI but no GLPI.
 func TestProviderConfigurationErrors(t *testing.T) {
 	cfg := `data "glpi_manufacturer" "x" { id = "1" }`
 	cases := []struct {

@@ -23,6 +23,7 @@ func TestStateValueNormalisesGLPIQuirks(t *testing.T) {
 		{"null string becomes empty", str, nil, types.StringValue("")},
 		{"string passes through", str, "SN1", types.StringValue("SN1")},
 		{"number in string field", str, json.Number("7"), types.StringValue("7")},
+		{"GLPI 10.0 stores &, < and > as entities", str, "R&#38;D &#60;team&#62;", types.StringValue("R&D <team>")},
 		{"null int becomes zero", num, nil, types.Int64Value(0)},
 		{"empty-string int becomes zero", num, "", types.Int64Value(0)},
 		{"quoted int", num, "12", types.Int64Value(12)},
@@ -83,8 +84,11 @@ func TestValidateURL(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{"glpi.example.com/apirest.php", "ftp://glpi/apirest.php", "https:///apirest.php", "://x", "https://user:pass@glpi.example.com/apirest.php"} {
-		if err := validateURL(bad); err == nil {
+		err := validateURL(bad)
+		if err == nil {
 			t.Errorf("%q accepted", bad)
+		} else if strings.Contains(err.Error(), "user:pass") {
+			t.Errorf("error echoes the credentials in the rejected URL: %v", err)
 		}
 	}
 }

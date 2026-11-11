@@ -7,20 +7,18 @@ const (
 	kindInt
 )
 
-// field maps one Terraform attribute to one GLPI field.
 type field struct {
-	tf       string // Terraform attribute name
-	api      string // GLPI field name
+	tf       string
+	api      string
 	kind     kind
-	required bool // Required in the resource schema
-	readOnly bool // computed by GLPI, never sent
+	required bool
+	readOnly bool
 	desc     string
 }
 
-// itemSpec describes one GLPI itemtype. Resources and data sources are both generated from it.
 type itemSpec struct {
-	itemtype string // GLPI class, used as the URL path segment
-	tfName   string // suffix of glpi_<tfName>
+	itemtype string
+	tfName   string
 	desc     string
 	fields   []field
 }
@@ -35,7 +33,6 @@ var commentField = str("comment", "Free-form comment.")
 
 var entityField = ref("entity_id", "entities_id", "ID of the entity that owns the item. 0 is the root entity.")
 
-// assetFields are shared by Computer and NetworkEquipment.
 func assetFields(typeAPI, modelAPI string) []field {
 	return []field{
 		nameField,

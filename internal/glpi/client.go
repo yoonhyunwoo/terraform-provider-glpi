@@ -1,4 +1,3 @@
-// Package glpi is a minimal client for the GLPI legacy REST API (apirest.php).
 package glpi
 
 import (
@@ -24,19 +23,16 @@ const (
 	errItemNotFound  = "ERROR_ITEM_NOT_FOUND"
 )
 
-// Item is one GLPI object as returned by the API. Numbers decode as json.Number.
 type Item map[string]any
 
-// Config holds connection settings.
 type Config struct {
-	BaseURL   string // e.g. https://glpi.example.com/apirest.php
-	AppToken  string // optional
+	BaseURL   string
+	AppToken  string
 	UserToken string
-	// PurgeOnDestroy deletes permanently instead of moving items to GLPI's trash bin.
+
 	PurgeOnDestroy bool
 }
 
-// Client talks to one GLPI instance and keeps a lazily created session.
 type Client struct {
 	cfg  Config
 	http *http.Client
@@ -45,7 +41,6 @@ type Client struct {
 	session string
 }
 
-// APIError is a non-2xx answer. GLPI encodes errors as ["ERROR_CODE", "message"].
 type APIError struct {
 	Status  int
 	Code    string
@@ -56,8 +51,6 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("glpi: HTTP %d %s: %s", e.Status, e.Code, e.Message)
 }
 
-// IsNotFound reports whether err says the requested item does not exist. A bare 404 is not
-// enough: a wrong base URL or unknown itemtype also answers 404 and must stay an error.
 func IsNotFound(err error) bool {
 	var apiErr *APIError
 	return errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound && apiErr.Code == errItemNotFound
@@ -69,11 +62,13 @@ func New(cfg Config) *Client {
 		cfg: cfg,
 		http: &http.Client{
 			Timeout: 60 * time.Second,
-			// A redirect would forward the session headers to another host and turn writes into GETs.
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+
+			CheckRedirect: refuseRedirects,
 		},
 	}
 }
+
+func refuseRedirects(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 func (c *Client) Create(ctx context.Context, itemtype string, input Item) (int64, error) {
 	var out struct {
@@ -106,7 +101,6 @@ func (c *Client) Update(ctx context.Context, itemtype string, id int64, input It
 	return checkBulk(out)
 }
 
-// Delete moves the item to the trash bin, or purges it when PurgeOnDestroy is set.
 func (c *Client) Delete(ctx context.Context, itemtype string, id int64) error {
 	q := url.Values{"force_purge": {strconv.FormatBool(c.cfg.PurgeOnDestroy)}}
 	var out []map[string]any
@@ -116,16 +110,9 @@ func (c *Client) Delete(ctx context.Context, itemtype string, id int64) error {
 	return checkBulk(out)
 }
 
-// Unescape converts text returned by GLPI back to what the user wrote. GLPI 10.0 stores &, <
-// and > as numeric entities and the API returns them that way.
-func Unescape(s string) string { return html.UnescapeString(s) }
-
-// searchSegment returns the longest part of name that GLPI's searchText handles reliably. Text
-// around &, <, > and quotes does not match the stored entities, so it is left to the exact
-// client-side filter. An empty result means "list everything".
 func searchSegment(name string) string {
 	best := ""
-	for _, part := range strings.FieldsFunc(name, func(r rune) bool { return strings.ContainsRune(`&<>"'`, r) }) {
+	for _, part := range strings.FieldsFunc(name, isUnreliableSearchRune) {
 		if len(part) > len(best) {
 			best = part
 		}
@@ -133,8 +120,8 @@ func searchSegment(name string) string {
 	return best
 }
 
-// FindByName returns all items whose name equals name exactly. GLPI's searchText is a
-// substring match, so the result is filtered client-side.
+func isUnreliableSearchRune(r rune) bool { return strings.ContainsRune(`&<>"'`, r) }
+
 func (c *Client) FindByName(ctx context.Context, itemtype, name string) ([]Item, error) {
 	q := url.Values{
 		"range":       {"0-1000"},
@@ -143,29 +130,22 @@ func (c *Client) FindByName(ctx context.Context, itemtype, name string) ([]Item,
 	if seg := searchSegment(name); seg != "" {
 		q.Set("searchText[name]", seg)
 	}
-	var items []Item
-	if err := c.do(ctx, http.MethodGet, "/"+itemtype, q, nil, &items); err != nil {
+	var candidates []Item
+	if err := c.do(ctx, http.MethodGet, "/"+itemtype, q, nil, &candidates); err != nil {
 		return nil, err
 	}
-	exact := items[:0]
-	for _, it := range items {
-		if s, _ := it["name"].(string); Unescape(s) == name {
+	exact := candidates[:0]
+	for _, it := range candidates {
+		if s, _ := it["name"].(string); html.UnescapeString(s) == name {
 			exact = append(exact, it)
 		}
 	}
 	return exact, nil
 }
 
-// checkBulk turns a {"<id>": false, "message": ...} row into an error. Keys are sorted so the
-// reported item is stable.
 func checkBulk(out []map[string]any) error {
 	for _, row := range out {
-		keys := make([]string, 0, len(row))
-		for k := range row {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
+		for _, k := range sortedKeys(row) {
 			if ok, isBool := row[k].(bool); isBool && !ok {
 				msg, _ := row["message"].(string)
 				return fmt.Errorf("glpi: item %s rejected: %s", k, msg)
@@ -173,6 +153,15 @@ func checkBulk(out []map[string]any) error {
 		}
 	}
 	return nil
+}
+
+func sortedKeys(row map[string]any) []string {
+	keys := make([]string, 0, len(row))
+	for k := range row {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (c *Client) initSession(ctx context.Context) (string, error) {
@@ -211,7 +200,6 @@ func (c *Client) sessionToken(ctx context.Context, stale string) (string, error)
 	return tok, nil
 }
 
-// do performs an authenticated call and retries once with a fresh session on 401.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
 	payload, err := marshalBody(body)
 	if err != nil {
@@ -236,7 +224,6 @@ func isUnauthorized(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.Status == http.StatusUnauthorized
 }
 
-// attempt sends one request with a session other than stale and returns the session it used.
 func (c *Client) attempt(ctx context.Context, method, path string, query url.Values, payload []byte, out any, stale string) (string, error) {
 	tok, err := c.sessionToken(ctx, stale)
 	if err != nil {
@@ -296,11 +283,11 @@ func decodeJSON(raw []byte, out any) error {
 
 func parseError(resp *http.Response, raw []byte) *APIError {
 	e := &APIError{Status: resp.StatusCode, Message: strings.TrimSpace(string(raw))}
-	var pair []string
-	if json.Unmarshal(raw, &pair) == nil && len(pair) > 0 {
-		e.Code = pair[0]
-		if len(pair) > 1 {
-			e.Message = pair[1]
+	var codeAndMessage []string
+	if json.Unmarshal(raw, &codeAndMessage) == nil && len(codeAndMessage) > 0 {
+		e.Code = codeAndMessage[0]
+		if len(codeAndMessage) > 1 {
+			e.Message = codeAndMessage[1]
 		}
 	}
 	if len(e.Message) > maxErrorBytes {

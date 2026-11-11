@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// newServer routes /initSession to a counter-based token ("s1", "s2", ...) and everything
-// else to h.
 func newServer(t *testing.T, inits *atomic.Int32, h http.HandlerFunc) *Client {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -196,11 +194,5 @@ func TestSearchSegmentAvoidsCharactersGLPIEscapes(t *testing.T) {
 		if got := searchSegment(in); got != want {
 			t.Errorf("%q: got %q want %q", in, got, want)
 		}
-	}
-}
-
-func TestUnescapeReversesGLPIEntities(t *testing.T) {
-	if got := Unescape("R&#38;D &#60;team&#62;"); got != "R&D <team>" {
-		t.Fatalf("got %q", got)
 	}
 }

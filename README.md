@@ -42,7 +42,7 @@ make test testacc
 make testenv-down
 ```
 
-`GLPI_VERSION` selects the image tag (default `10.0`) and `GLPI_PORT` the host port (default `8088`). Run `make generate` after changing a schema, and commit `docs/`; CI fails when it is stale.
+`GLPI_VERSION` selects the image tag (default `10.0`) and `GLPI_PORT` the host port (default `8088`). The bootstrap script asks GLPI itself to generate the user token, because GLPI stores API tokens encrypted and a plain value written to the database is rejected. Run `make generate` after changing a schema, and commit `docs/`; CI fails when it is stale.
 
 ## Releasing
 

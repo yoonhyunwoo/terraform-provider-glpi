@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Starts a disposable GLPI, enables the REST API and prints the env vars the acceptance tests need.
-# Usage: eval "$(testenv/bootstrap.sh)"
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -26,8 +24,10 @@ done
 sql -e "UPDATE glpi_configs SET value='1' WHERE context='core' AND name IN ('enable_api','enable_api_login_credentials','enable_api_login_external_token');
         UPDATE glpi_apiclients SET is_active=1, ipv4_range_start=NULL, ipv4_range_end=NULL, ipv6=NULL, app_token=NULL;" 2>/dev/null
 
-# GLPI stores API tokens encrypted, so let GLPI generate one instead of writing the column.
-USER_TOKEN=$(docker compose exec -T glpi php -r 'define("GLPI_ROOT","/var/www/glpi"); include "/var/www/glpi/inc/includes.php"; $u=new User(); $u->getFromDBbyName("glpi"); echo "TOKEN=".$u->getAuthToken("api_token", true)."\n";' 2>/dev/null | sed -n 's/^TOKEN=//p')
+generate_token_through_glpi() {
+  docker compose exec -T glpi php -r 'define("GLPI_ROOT","/var/www/glpi"); include "/var/www/glpi/inc/includes.php"; $u=new User(); $u->getFromDBbyName("glpi"); echo "TOKEN=".$u->getAuthToken("api_token", true)."\n";' 2>/dev/null | sed -n 's/^TOKEN=//p'
+}
+USER_TOKEN=$(generate_token_through_glpi)
 [ -n "$USER_TOKEN" ] || { echo "could not generate user token" >&2; exit 1; }
 
 code=""

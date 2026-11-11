@@ -23,7 +23,6 @@ var (
 	_ resource.ResourceWithImportState = (*itemResource)(nil)
 )
 
-// itemResource is one generic CRUD implementation shared by every itemtype in itemSpecs.
 type itemResource struct {
 	spec   itemSpec
 	client *glpi.Client
@@ -42,8 +41,7 @@ func (r *itemResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 		},
 	}
 	for _, f := range r.spec.fields {
-		// Read-only fields are computed by GLPI from other fields, so they must be recomputed on
-		// every change and never carry UseStateForUnknown.
+
 		optional := !f.required && !f.readOnly
 		computed := !f.required
 		if f.kind == kindInt {
@@ -89,8 +87,8 @@ func (r *itemResource) Create(ctx context.Context, req resource.CreateRequest, r
 		resp.Diagnostics.AddError("Creating "+r.spec.itemtype, err.Error())
 		return
 	}
-	// Persist the ID first so a failing read-back leaves a tainted resource instead of an orphan.
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), strconv.FormatInt(id, 10))...)
+
+	resp.Diagnostics.Append(rememberCreatedID(ctx, &resp.State, id)...)
 	r.refresh(ctx, id, &resp.State, &resp.Diagnostics)
 }
 
@@ -100,7 +98,7 @@ func (r *itemResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 	item, err := r.client.Get(ctx, r.spec.itemtype, id)
-	if glpi.IsNotFound(err) || (err == nil && isTrashed(item)) {
+	if isGone(item, err) {
 		resp.State.RemoveResource(ctx)
 		return
 	}
@@ -134,8 +132,8 @@ func (r *itemResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 	if err := r.client.Delete(ctx, r.spec.itemtype, id); err != nil {
-		// GLPI answers a delete of a trashed item with a 400. Gone from the trash bin's point of view is gone.
-		if item, gerr := r.client.Get(ctx, r.spec.itemtype, id); glpi.IsNotFound(gerr) || (gerr == nil && isTrashed(item)) {
+
+		if item, gerr := r.client.Get(ctx, r.spec.itemtype, id); isGone(item, gerr) {
 			return
 		}
 		resp.Diagnostics.AddError("Deleting "+r.spec.itemtype, err.Error())
@@ -150,7 +148,6 @@ func (r *itemResource) ImportState(ctx context.Context, req resource.ImportState
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
 }
 
-// stateID reads and validates the item ID held in state.
 func stateID(ctx context.Context, state tfsdk.State, diags *diag.Diagnostics) (int64, bool) {
 	var s types.String
 	diags.Append(state.GetAttribute(ctx, path.Root("id"), &s)...)
@@ -165,7 +162,10 @@ func stateID(ctx context.Context, state tfsdk.State, diags *diag.Diagnostics) (i
 	return id, true
 }
 
-// refresh reads the item back so computed attributes reflect what GLPI stored.
+func rememberCreatedID(ctx context.Context, state *tfsdk.State, id int64) diag.Diagnostics {
+	return state.SetAttribute(ctx, path.Root("id"), strconv.FormatInt(id, 10))
+}
+
 func (r *itemResource) refresh(ctx context.Context, id int64, state *tfsdk.State, diags *diag.Diagnostics) {
 	item, err := r.client.Get(ctx, r.spec.itemtype, id)
 	if err != nil {

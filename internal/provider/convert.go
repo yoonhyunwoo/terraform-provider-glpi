@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -15,8 +16,6 @@ import (
 	"github.com/yoonhyunwoo/terraform-provider-glpi/internal/glpi"
 )
 
-// stateValue converts a GLPI JSON value to the Terraform value for f. GLPI returns null for
-// unset strings and sometimes quotes integers, so both are normalised.
 func (f field) stateValue(v any) (attr.Value, error) {
 	if f.kind == kindInt {
 		switch n := v.(type) {
@@ -38,14 +37,13 @@ func (f field) stateValue(v any) (attr.Value, error) {
 	case nil:
 		return types.StringValue(""), nil
 	case string:
-		return types.StringValue(glpi.Unescape(s)), nil
+		return types.StringValue(html.UnescapeString(s)), nil
 	case json.Number:
 		return types.StringValue(s.String()), nil
 	}
 	return nil, fmt.Errorf("field %s: unexpected %T", f.api, v)
 }
 
-// apiInput builds the GLPI payload from known, non-null values read through get.
 func (s itemSpec) apiInput(ctx context.Context, get func(context.Context, path.Path, any) diag.Diagnostics) (glpi.Item, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	in := glpi.Item{}
@@ -71,7 +69,6 @@ func (s itemSpec) apiInput(ctx context.Context, get func(context.Context, path.P
 	return in, diags
 }
 
-// itemID reads the numeric ID GLPI includes in every item.
 func itemID(item glpi.Item) (int64, error) {
 	n, ok := item["id"].(json.Number)
 	if !ok {
@@ -80,7 +77,6 @@ func itemID(item glpi.Item) (int64, error) {
 	return n.Int64()
 }
 
-// setState writes id and every field of item through set.
 func (s itemSpec) setState(ctx context.Context, set func(context.Context, path.Path, any) diag.Diagnostics, item glpi.Item) diag.Diagnostics {
 	id, err := itemID(item)
 	if err != nil {
@@ -100,8 +96,6 @@ func (s itemSpec) setState(ctx context.Context, set func(context.Context, path.P
 	return diags
 }
 
-// isTrashed reports whether GLPI moved the item to the trash bin. GLPI sends is_deleted as a
-// number, but quoted integers and booleans are tolerated like in stateValue.
 func isTrashed(item glpi.Item) bool {
 	switch v := item["is_deleted"].(type) {
 	case json.Number:
@@ -115,8 +109,10 @@ func isTrashed(item glpi.Item) bool {
 	return false
 }
 
-// parseID accepts only the canonical form of a positive GLPI ID, so the value Terraform holds
-// always equals what setState writes back.
+func isGone(item glpi.Item, err error) bool {
+	return glpi.IsNotFound(err) || (err == nil && isTrashed(item))
+}
+
 func parseID(s string) (int64, error) {
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil || n <= 0 || strconv.FormatInt(n, 10) != s {

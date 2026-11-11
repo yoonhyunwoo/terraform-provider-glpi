@@ -15,7 +15,6 @@ import (
 
 var _ datasource.DataSourceWithConfigure = (*itemDataSource)(nil)
 
-// itemDataSource looks one item up by id or by exact name.
 type itemDataSource struct {
 	spec   itemSpec
 	client *glpi.Client
