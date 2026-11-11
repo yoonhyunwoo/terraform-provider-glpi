@@ -14,13 +14,6 @@ import (
 	"github.com/yoonhyunwoo/terraform-provider-glpi/internal/glpi"
 )
 
-func (f field) attrType() attr.Type {
-	if f.kind == kindInt {
-		return types.Int64Type
-	}
-	return types.StringType
-}
-
 // stateValue converts a GLPI JSON value to the Terraform value for f. GLPI returns null for
 // unset strings and sometimes quotes integers, so both are normalised.
 func (f field) stateValue(v any) (attr.Value, error) {

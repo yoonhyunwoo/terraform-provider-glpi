@@ -34,12 +34,12 @@ type Config struct {
 	UserToken string
 	// PurgeOnDestroy deletes permanently instead of moving items to GLPI's trash bin.
 	PurgeOnDestroy bool
-	HTTP           *http.Client
 }
 
 // Client talks to one GLPI instance and keeps a lazily created session.
 type Client struct {
-	cfg Config
+	cfg  Config
+	http *http.Client
 
 	mu      sync.Mutex
 	session string
@@ -65,14 +65,14 @@ func IsNotFound(err error) bool {
 
 func New(cfg Config) *Client {
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
-	if cfg.HTTP == nil {
-		cfg.HTTP = &http.Client{
+	return &Client{
+		cfg: cfg,
+		http: &http.Client{
 			Timeout: 60 * time.Second,
 			// A redirect would forward the session headers to another host and turn writes into GETs.
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		}
+		},
 	}
-	return &Client{cfg: cfg}
 }
 
 func (c *Client) Create(ctx context.Context, itemtype string, input Item) (int64, error) {
@@ -250,7 +250,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 }
 
 func (c *Client) send(req *http.Request, out any) error {
-	resp, err := c.cfg.HTTP.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
 	}
