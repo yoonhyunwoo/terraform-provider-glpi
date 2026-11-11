@@ -250,7 +250,7 @@ func (c *Client) send(req *http.Request, out any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := readBody(resp.Body)
 	if err != nil {
 		return err
