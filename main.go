@@ -1,3 +1,5 @@
+//go:generate go tool tfplugindocs generate --provider-name glpi
+
 package main
 
 import (
