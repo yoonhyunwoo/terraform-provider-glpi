@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-11-11)
 
 * New resources `glpi_computer`, `glpi_network_equipment`, `glpi_location` and `glpi_manufacturer`.
 * New data sources with the same names, looked up by `id` or exact `name`.
