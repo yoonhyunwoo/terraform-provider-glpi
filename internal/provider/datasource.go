@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -70,7 +69,6 @@ func (d *itemDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	}
 
 	var item glpi.Item
-	var itemID int64
 	if hasID {
 		n, err := parseID(id.ValueString())
 		if err != nil {
@@ -85,7 +83,6 @@ func (d *itemDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 			resp.Diagnostics.AddError("Not found", fmt.Sprintf("%s %d is in the GLPI trash bin.", d.spec.itemtype, n))
 			return
 		}
-		itemID = n
 	} else {
 		found, err := d.client.FindByName(ctx, d.spec.itemtype, name.ValueString())
 		if err != nil {
@@ -102,17 +99,6 @@ func (d *itemDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 			resp.Diagnostics.AddError("Ambiguous name", fmt.Sprintf("%d %s items are named %q; look up by id instead.", len(found), d.spec.itemtype, name.ValueString()))
 			return
 		}
-		num, ok := item["id"].(json.Number)
-		if !ok {
-			resp.Diagnostics.AddError("Unexpected GLPI response", "search result has no numeric id")
-			return
-		}
-		n, err := num.Int64()
-		if err != nil {
-			resp.Diagnostics.AddError("Unexpected GLPI response", err.Error())
-			return
-		}
-		itemID = n
 	}
-	resp.Diagnostics.Append(d.spec.setState(ctx, resp.State.SetAttribute, itemID, item)...)
+	resp.Diagnostics.Append(d.spec.setState(ctx, resp.State.SetAttribute, item)...)
 }

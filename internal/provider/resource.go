@@ -96,14 +96,8 @@ func (r *itemResource) Create(ctx context.Context, req resource.CreateRequest, r
 }
 
 func (r *itemResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var idStr types.String
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("id"), &idStr)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	id, err := parseID(idStr.ValueString())
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid ID", err.Error())
+	id, ok := stateID(ctx, req.State, &resp.Diagnostics)
+	if !ok {
 		return
 	}
 	item, err := r.client.Get(ctx, r.spec.itemtype, id)
@@ -115,20 +109,17 @@ func (r *itemResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		resp.Diagnostics.AddError("Reading "+r.spec.itemtype, err.Error())
 		return
 	}
-	resp.Diagnostics.Append(r.spec.setState(ctx, resp.State.SetAttribute, id, item)...)
+	resp.Diagnostics.Append(r.spec.setState(ctx, resp.State.SetAttribute, item)...)
 }
 
 func (r *itemResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var idStr types.String
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("id"), &idStr)...)
+	id, ok := stateID(ctx, req.State, &resp.Diagnostics)
+	if !ok {
+		return
+	}
 	input, diags := r.spec.apiInput(ctx, req.Plan.GetAttribute)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
-		return
-	}
-	id, err := parseID(idStr.ValueString())
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid ID", err.Error())
 		return
 	}
 	if err := r.client.Update(ctx, r.spec.itemtype, id, input); err != nil {
@@ -139,17 +130,11 @@ func (r *itemResource) Update(ctx context.Context, req resource.UpdateRequest, r
 }
 
 func (r *itemResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var idStr types.String
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("id"), &idStr)...)
-	if resp.Diagnostics.HasError() {
+	id, ok := stateID(ctx, req.State, &resp.Diagnostics)
+	if !ok {
 		return
 	}
-	id, err := parseID(idStr.ValueString())
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid ID", err.Error())
-		return
-	}
-	if err := r.client.Delete(ctx, r.spec.itemtype, id); err != nil && !glpi.IsNotFound(err) {
+	if err := r.client.Delete(ctx, r.spec.itemtype, id); err != nil {
 		// GLPI answers a delete of a trashed item with a 400. Gone from the trash bin's point of view is gone.
 		if item, gerr := r.client.Get(ctx, r.spec.itemtype, id); glpi.IsNotFound(gerr) || (gerr == nil && isTrashed(item)) {
 			return
@@ -166,6 +151,21 @@ func (r *itemResource) ImportState(ctx context.Context, req resource.ImportState
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
 }
 
+// stateID reads and validates the item ID held in state.
+func stateID(ctx context.Context, state tfsdk.State, diags *diag.Diagnostics) (int64, bool) {
+	var s types.String
+	diags.Append(state.GetAttribute(ctx, path.Root("id"), &s)...)
+	if diags.HasError() {
+		return 0, false
+	}
+	id, err := parseID(s.ValueString())
+	if err != nil {
+		diags.AddError("Invalid ID", err.Error())
+		return 0, false
+	}
+	return id, true
+}
+
 // refresh reads the item back so computed attributes reflect what GLPI stored.
 func (r *itemResource) refresh(ctx context.Context, id int64, state *tfsdk.State, diags *diag.Diagnostics) {
 	item, err := r.client.Get(ctx, r.spec.itemtype, id)
@@ -173,5 +173,5 @@ func (r *itemResource) refresh(ctx context.Context, id int64, state *tfsdk.State
 		diags.AddError("Reading "+r.spec.itemtype+" after write", err.Error())
 		return
 	}
-	diags.Append(r.spec.setState(ctx, state.SetAttribute, id, item)...)
+	diags.Append(r.spec.setState(ctx, state.SetAttribute, item)...)
 }

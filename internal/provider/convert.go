@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -70,8 +71,23 @@ func (s itemSpec) apiInput(ctx context.Context, get func(context.Context, path.P
 	return in, diags
 }
 
+// itemID reads the numeric ID GLPI includes in every item.
+func itemID(item glpi.Item) (int64, error) {
+	n, ok := item["id"].(json.Number)
+	if !ok {
+		return 0, errors.New("GLPI response has no numeric id")
+	}
+	return n.Int64()
+}
+
 // setState writes id and every field of item through set.
-func (s itemSpec) setState(ctx context.Context, set func(context.Context, path.Path, any) diag.Diagnostics, id int64, item glpi.Item) diag.Diagnostics {
+func (s itemSpec) setState(ctx context.Context, set func(context.Context, path.Path, any) diag.Diagnostics, item glpi.Item) diag.Diagnostics {
+	id, err := itemID(item)
+	if err != nil {
+		var diags diag.Diagnostics
+		diags.AddError("Unexpected GLPI response", err.Error())
+		return diags
+	}
 	diags := set(ctx, path.Root("id"), strconv.FormatInt(id, 10))
 	for _, f := range s.fields {
 		v, err := f.stateValue(item[f.api])
