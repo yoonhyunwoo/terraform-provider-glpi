@@ -44,7 +44,7 @@ func (f field) stateValue(v any) (attr.Value, error) {
 	case nil:
 		return types.StringValue(""), nil
 	case string:
-		return types.StringValue(s), nil
+		return types.StringValue(glpi.Unescape(s)), nil
 	case json.Number:
 		return types.StringValue(s.String()), nil
 	}
@@ -91,12 +91,27 @@ func (s itemSpec) setState(ctx context.Context, set func(context.Context, path.P
 	return diags
 }
 
-// isTrashed reports whether GLPI moved the item to the trash bin.
+// isTrashed reports whether GLPI moved the item to the trash bin. GLPI sends is_deleted as a
+// number, but quoted integers and booleans are tolerated like in stateValue.
 func isTrashed(item glpi.Item) bool {
-	n, ok := item["is_deleted"].(json.Number)
-	if !ok {
-		return false
+	switch v := item["is_deleted"].(type) {
+	case json.Number:
+		i, _ := v.Int64()
+		return i != 0
+	case string:
+		return v != "" && v != "0"
+	case bool:
+		return v
 	}
-	i, _ := n.Int64()
-	return i != 0
+	return false
+}
+
+// parseID accepts only the canonical form of a positive GLPI ID, so the value Terraform holds
+// always equals what setState writes back.
+func parseID(s string) (int64, error) {
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n <= 0 || strconv.FormatInt(n, 10) != s {
+		return 0, fmt.Errorf("%q is not a positive integer GLPI ID", s)
+	}
+	return n, nil
 }

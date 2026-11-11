@@ -101,7 +101,7 @@ func (r *itemResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	id, err := strconv.ParseInt(idStr.ValueString(), 10, 64)
+	id, err := parseID(idStr.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid ID", err.Error())
 		return
@@ -126,7 +126,7 @@ func (r *itemResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	id, err := strconv.ParseInt(idStr.ValueString(), 10, 64)
+	id, err := parseID(idStr.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid ID", err.Error())
 		return
@@ -144,19 +144,23 @@ func (r *itemResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	id, err := strconv.ParseInt(idStr.ValueString(), 10, 64)
+	id, err := parseID(idStr.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid ID", err.Error())
 		return
 	}
 	if err := r.client.Delete(ctx, r.spec.itemtype, id); err != nil && !glpi.IsNotFound(err) {
+		// GLPI answers a delete of a trashed item with a 400. Gone from the trash bin's point of view is gone.
+		if item, gerr := r.client.Get(ctx, r.spec.itemtype, id); glpi.IsNotFound(gerr) || (gerr == nil && isTrashed(item)) {
+			return
+		}
 		resp.Diagnostics.AddError("Deleting "+r.spec.itemtype, err.Error())
 	}
 }
 
 func (r *itemResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if _, err := strconv.ParseInt(req.ID, 10, 64); err != nil {
-		resp.Diagnostics.AddError("Invalid import ID", "GLPI IDs are integers: "+req.ID)
+	if _, err := parseID(req.ID); err != nil {
+		resp.Diagnostics.AddError("Invalid import ID", err.Error())
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)

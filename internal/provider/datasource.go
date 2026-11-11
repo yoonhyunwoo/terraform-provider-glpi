@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -73,7 +72,7 @@ func (d *itemDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	var item glpi.Item
 	var itemID int64
 	if hasID {
-		n, err := strconv.ParseInt(id.ValueString(), 10, 64)
+		n, err := parseID(id.ValueString())
 		if err != nil {
 			resp.Diagnostics.AddAttributeError(path.Root("id"), "Invalid ID", err.Error())
 			return

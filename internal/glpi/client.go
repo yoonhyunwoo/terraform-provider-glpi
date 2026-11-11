@@ -7,13 +7,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	maxResponseBytes = 32 << 20
+	maxErrorBytes    = 512
+	errItemNotFound  = "ERROR_ITEM_NOT_FOUND"
 )
 
 // Item is one GLPI object as returned by the API. Numbers decode as json.Number.
@@ -48,16 +56,21 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("glpi: HTTP %d %s: %s", e.Status, e.Code, e.Message)
 }
 
-// IsNotFound reports whether err is a 404 from GLPI.
+// IsNotFound reports whether err says the requested item does not exist. A bare 404 is not
+// enough: a wrong base URL or unknown itemtype also answers 404 and must stay an error.
 func IsNotFound(err error) bool {
 	var apiErr *APIError
-	return errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound && apiErr.Code == errItemNotFound
 }
 
 func New(cfg Config) *Client {
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	if cfg.HTTP == nil {
-		cfg.HTTP = &http.Client{Timeout: 60 * time.Second}
+		cfg.HTTP = &http.Client{
+			Timeout: 60 * time.Second,
+			// A redirect would forward the session headers to another host and turn writes into GETs.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}
 	}
 	return &Client{cfg: cfg}
 }
@@ -69,7 +82,11 @@ func (c *Client) Create(ctx context.Context, itemtype string, input Item) (int64
 	if err := c.do(ctx, http.MethodPost, "/"+itemtype, nil, map[string]any{"input": input}, &out); err != nil {
 		return 0, err
 	}
-	return out.ID.Int64()
+	id, err := out.ID.Int64()
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("glpi: create %s returned no usable id (%q)", itemtype, out.ID)
+	}
+	return id, nil
 }
 
 func (c *Client) Get(ctx context.Context, itemtype string, id int64) (Item, error) {
@@ -99,13 +116,32 @@ func (c *Client) Delete(ctx context.Context, itemtype string, id int64) error {
 	return checkBulk(out)
 }
 
+// Unescape converts text returned by GLPI back to what the user wrote. GLPI 10.0 stores &, <
+// and > as numeric entities and the API returns them that way.
+func Unescape(s string) string { return html.UnescapeString(s) }
+
+// searchSegment returns the longest part of name that GLPI's searchText handles reliably. Text
+// around &, <, > and quotes does not match the stored entities, so it is left to the exact
+// client-side filter. An empty result means "list everything".
+func searchSegment(name string) string {
+	best := ""
+	for _, part := range strings.FieldsFunc(name, func(r rune) bool { return strings.ContainsRune(`&<>"'`, r) }) {
+		if len(part) > len(best) {
+			best = part
+		}
+	}
+	return best
+}
+
 // FindByName returns all items whose name equals name exactly. GLPI's searchText is a
 // substring match, so the result is filtered client-side.
 func (c *Client) FindByName(ctx context.Context, itemtype, name string) ([]Item, error) {
 	q := url.Values{
-		"searchText[name]": {name},
-		"range":            {"0-1000"},
-		"get_hateoas":      {"false"},
+		"range":       {"0-1000"},
+		"get_hateoas": {"false"},
+	}
+	if seg := searchSegment(name); seg != "" {
+		q.Set("searchText[name]", seg)
 	}
 	var items []Item
 	if err := c.do(ctx, http.MethodGet, "/"+itemtype, q, nil, &items); err != nil {
@@ -113,17 +149,24 @@ func (c *Client) FindByName(ctx context.Context, itemtype, name string) ([]Item,
 	}
 	exact := items[:0]
 	for _, it := range items {
-		if s, _ := it["name"].(string); s == name {
+		if s, _ := it["name"].(string); Unescape(s) == name {
 			exact = append(exact, it)
 		}
 	}
 	return exact, nil
 }
 
+// checkBulk turns a {"<id>": false, "message": ...} row into an error. Keys are sorted so the
+// reported item is stable.
 func checkBulk(out []map[string]any) error {
 	for _, row := range out {
-		for k, v := range row {
-			if ok, isBool := v.(bool); isBool && !ok {
+		keys := make([]string, 0, len(row))
+		for k := range row {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if ok, isBool := row[k].(bool); isBool && !ok {
 				msg, _ := row["message"].(string)
 				return fmt.Errorf("glpi: item %s rejected: %s", k, msg)
 			}
@@ -146,7 +189,10 @@ func (c *Client) initSession(ctx context.Context) (string, error) {
 		SessionToken string `json:"session_token"`
 	}
 	if err := c.send(req, &out); err != nil {
-		return "", fmt.Errorf("initSession: %w", err)
+		return "", fmt.Errorf("initSession (the url must be the apirest.php endpoint): %w", err)
+	}
+	if out.SessionToken == "" {
+		return "", errors.New("initSession: response contained no session_token")
 	}
 	return out.SessionToken, nil
 }
@@ -209,12 +255,15 @@ func (c *Client) send(req *http.Request, out any) error {
 		return err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return err
 	}
+	if len(raw) > maxResponseBytes {
+		return fmt.Errorf("glpi: response larger than %d bytes", maxResponseBytes)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return parseError(resp.StatusCode, raw)
+		return parseError(resp, raw)
 	}
 	if out == nil || len(bytes.TrimSpace(raw)) == 0 {
 		return nil
@@ -227,14 +276,20 @@ func (c *Client) send(req *http.Request, out any) error {
 	return nil
 }
 
-func parseError(status int, raw []byte) *APIError {
-	e := &APIError{Status: status, Message: strings.TrimSpace(string(raw))}
+func parseError(resp *http.Response, raw []byte) *APIError {
+	e := &APIError{Status: resp.StatusCode, Message: strings.TrimSpace(string(raw))}
 	var pair []string
 	if json.Unmarshal(raw, &pair) == nil && len(pair) > 0 {
 		e.Code = pair[0]
 		if len(pair) > 1 {
 			e.Message = pair[1]
 		}
+	}
+	if len(e.Message) > maxErrorBytes {
+		e.Message = e.Message[:maxErrorBytes] + "..."
+	}
+	if loc := resp.Header.Get("Location"); resp.StatusCode >= 300 && resp.StatusCode < 400 && loc != "" {
+		e.Message = "redirected to " + loc + "; set url to the final apirest.php address"
 	}
 	return e
 }

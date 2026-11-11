@@ -3,7 +3,11 @@ package provider
 
 import (
 	"context"
+	"errors"
+	"net"
+	"net/url"
 	"os"
+	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -59,11 +63,32 @@ func (p *glpiProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 	}
 }
 
+// orEnv prefers a non-empty configured value, so var.x defaulting to "" still falls back to the environment.
 func orEnv(v types.String, env string) string {
-	if !v.IsNull() && !v.IsUnknown() {
+	if !v.IsNull() && !v.IsUnknown() && v.ValueString() != "" {
 		return v.ValueString()
 	}
 	return os.Getenv(env)
+}
+
+// validateURL never echoes the value, so credentials pasted into the URL cannot reach plan output.
+func validateURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return errors.New("must be an absolute http(s) URL such as https://glpi.example.com/apirest.php")
+	}
+	if u.User != nil {
+		return errors.New("must not contain credentials; use user_token")
+	}
+	return nil
+}
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (p *glpiProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
@@ -72,8 +97,13 @@ func (p *glpiProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	for name, v := range map[string]types.String{"url": cfg.URL, "app_token": cfg.AppToken, "user_token": cfg.UserToken} {
-		if v.IsUnknown() {
+	for name, unknown := range map[string]bool{
+		"url":              cfg.URL.IsUnknown(),
+		"app_token":        cfg.AppToken.IsUnknown(),
+		"user_token":       cfg.UserToken.IsUnknown(),
+		"purge_on_destroy": cfg.Purge.IsUnknown(),
+	} {
+		if unknown {
 			resp.Diagnostics.AddAttributeError(path.Root(name), "Unknown value", "The value must be known at configuration time.")
 		}
 	}
@@ -81,20 +111,34 @@ func (p *glpiProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 		return
 	}
 
-	url := orEnv(cfg.URL, "GLPI_URL")
+	baseURL := orEnv(cfg.URL, "GLPI_URL")
 	user := orEnv(cfg.UserToken, "GLPI_USER_TOKEN")
-	if url == "" {
+	if baseURL == "" {
 		resp.Diagnostics.AddAttributeError(path.Root("url"), "Missing GLPI URL", "Set url or the GLPI_URL environment variable.")
+	} else if err := validateURL(baseURL); err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("url"), "Invalid GLPI URL", err.Error())
+	} else if u, _ := url.Parse(baseURL); u.Scheme == "http" && !isLoopback(u.Hostname()) {
+		resp.Diagnostics.AddAttributeWarning(path.Root("url"), "Unencrypted GLPI URL", "The user token is sent over plain HTTP. Use https.")
 	}
 	if user == "" {
 		resp.Diagnostics.AddAttributeError(path.Root("user_token"), "Missing user token", "Set user_token or the GLPI_USER_TOKEN environment variable.")
+	}
+
+	purge := cfg.Purge.ValueBool()
+	if cfg.Purge.IsNull() {
+		if env := os.Getenv("GLPI_PURGE_ON_DESTROY"); env != "" {
+			b, err := strconv.ParseBool(env)
+			if err != nil {
+				resp.Diagnostics.AddError("Invalid GLPI_PURGE_ON_DESTROY", err.Error())
+			}
+			purge = b
+		}
 	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	purge := cfg.Purge.ValueBool() || (cfg.Purge.IsNull() && os.Getenv("GLPI_PURGE_ON_DESTROY") == "true")
-	c := glpi.New(glpi.Config{BaseURL: url, AppToken: orEnv(cfg.AppToken, "GLPI_APP_TOKEN"), UserToken: user, PurgeOnDestroy: purge})
+	c := glpi.New(glpi.Config{BaseURL: baseURL, AppToken: orEnv(cfg.AppToken, "GLPI_APP_TOKEN"), UserToken: user, PurgeOnDestroy: purge})
 	resp.ResourceData = c
 	resp.DataSourceData = c
 }
