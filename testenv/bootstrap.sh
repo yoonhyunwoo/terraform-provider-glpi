@@ -29,10 +29,17 @@ case "${GLPI_VERSION:-10.0}" in
   11*) FIELDS_VERSION="${GLPI_FIELDS_VERSION-1.24.7}" ;;
   *) FIELDS_VERSION="${GLPI_FIELDS_VERSION-}" ;;
 esac
-if [ -n "$FIELDS_VERSION" ]; then
+install_fields_plugin() {
   docker compose exec -T glpi sh -c "cd /tmp && curl -fsSL -o fields.tar.bz2 https://github.com/pluginsGLPI/fields/releases/download/${FIELDS_VERSION}/glpi-fields-${FIELDS_VERSION}.tar.bz2 && tar xjf fields.tar.bz2 -C /var/www/glpi/plugins && chown -R www-data /var/www/glpi/plugins/fields; cd /var/www/glpi && php bin/console plugin:install fields -u glpi; php bin/console plugin:activate fields" >&2 || true
-  docker compose exec -T glpi php /var/www/glpi/bin/console plugin:list 2>/dev/null | grep -E '^\| fields .*Enabled' >/dev/null \
-    || { echo "could not enable the Fields plugin ${FIELDS_VERSION}" >&2; exit 1; }
+  docker compose exec -T glpi php /var/www/glpi/bin/console plugin:list 2>/dev/null | grep -E '^\| fields .*Enabled' >/dev/null
+}
+if [ -n "$FIELDS_VERSION" ]; then
+  fields_ready=""
+  for _ in $(seq 1 5); do
+    install_fields_plugin && { fields_ready=1; break; }
+    sleep 5
+  done
+  [ -n "$fields_ready" ] || { echo "could not enable the Fields plugin ${FIELDS_VERSION}" >&2; exit 1; }
 fi
 
 generate_token_through_glpi() {
