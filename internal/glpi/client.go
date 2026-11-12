@@ -39,6 +39,10 @@ type Client struct {
 
 	mu      sync.Mutex
 	session string
+
+	// major is the server's major version, 0 when the server did not report one. GLPI 10 and older
+	// store &, < and > as numeric entities; GLPI 11 stores and returns the text unchanged.
+	major int
 }
 
 type APIError struct {
@@ -90,7 +94,7 @@ func (c *Client) Get(ctx context.Context, itemtype string, id int64) (Item, erro
 	if err := c.do(ctx, http.MethodGet, "/"+itemtype+"/"+strconv.FormatInt(id, 10), q, nil, &item); err != nil {
 		return nil, err
 	}
-	return item, nil
+	return c.unescape(item), nil
 }
 
 func (c *Client) Update(ctx context.Context, itemtype string, id int64, input Item) error {
@@ -122,13 +126,13 @@ func searchSegment(name string) string {
 
 func isUnreliableSearchRune(r rune) bool { return strings.ContainsRune(`&<>"'`, r) }
 
-func (c *Client) FindByName(ctx context.Context, itemtype, name string) ([]Item, error) {
+func (c *Client) FindByName(ctx context.Context, itemtype, column, name string) ([]Item, error) {
 	q := url.Values{
 		"range":       {"0-1000"},
 		"get_hateoas": {"false"},
 	}
 	if seg := searchSegment(name); seg != "" {
-		q.Set("searchText[name]", seg)
+		q.Set("searchText["+column+"]", seg)
 	}
 	var candidates []Item
 	if err := c.do(ctx, http.MethodGet, "/"+itemtype, q, nil, &candidates); err != nil {
@@ -136,11 +140,52 @@ func (c *Client) FindByName(ctx context.Context, itemtype, name string) ([]Item,
 	}
 	exact := candidates[:0]
 	for _, it := range candidates {
-		if s, _ := it["name"].(string); html.UnescapeString(s) == name {
+		it = c.unescape(it)
+		if s, _ := it[column].(string); s == name {
 			exact = append(exact, it)
 		}
 	}
 	return exact, nil
+}
+
+// List returns up to 1001 items of an itemtype, in the order GLPI lists them.
+func (c *Client) List(ctx context.Context, itemtype string) ([]Item, error) {
+	q := url.Values{"range": {"0-1000"}, "get_hateoas": {"false"}}
+	var rows []Item
+	if err := c.do(ctx, http.MethodGet, "/"+itemtype, q, nil, &rows); err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		rows[i] = c.unescape(rows[i])
+	}
+	return rows, nil
+}
+
+func (c *Client) SubItems(ctx context.Context, itemtype string, id int64, subItemtype string) ([]Item, error) {
+	q := url.Values{"range": {"0-1000"}, "get_hateoas": {"false"}}
+	var rows []Item
+	if err := c.do(ctx, http.MethodGet, "/"+itemtype+"/"+strconv.FormatInt(id, 10)+"/"+subItemtype, q, nil, &rows); err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		rows[i] = c.unescape(rows[i])
+	}
+	return rows, nil
+}
+
+func (c *Client) unescape(item Item) Item {
+	c.mu.Lock()
+	escaped := c.major < 11
+	c.mu.Unlock()
+	if !escaped {
+		return item
+	}
+	for k, v := range item {
+		if s, ok := v.(string); ok {
+			item[k] = html.UnescapeString(s)
+		}
+	}
+	return item
 }
 
 func checkBulk(out []map[string]any) error {
@@ -197,7 +242,43 @@ func (c *Client) sessionToken(ctx context.Context, stale string) (string, error)
 		return "", err
 	}
 	c.session = tok
+	c.major = c.serverMajor(ctx, tok)
 	return tok, nil
+}
+
+func (c *Client) serverMajor(ctx context.Context, tok string) int {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.BaseURL+"/getGlpiConfig", nil)
+	if err != nil {
+		return 0
+	}
+	req.Header.Set("Session-Token", tok)
+	if c.cfg.AppToken != "" {
+		req.Header.Set("App-Token", c.cfg.AppToken)
+	}
+	var out struct {
+		Config struct {
+			Version string `json:"version"`
+		} `json:"cfg_glpi"`
+	}
+	if err := c.send(req, &out); err != nil {
+		return 0
+	}
+	major, _, _ := strings.Cut(out.Config.Version, ".")
+	n, err := strconv.Atoi(major)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// ServerMajor returns the GLPI major version, or 0 when the server does not report it.
+func (c *Client) ServerMajor(ctx context.Context) (int, error) {
+	if _, err := c.sessionToken(ctx, ""); err != nil {
+		return 0, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.major, nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
