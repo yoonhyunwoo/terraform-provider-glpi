@@ -51,13 +51,16 @@ jobs:
           fi
 
   acceptance:
-    name: 'Acceptance: GLPI 10.0, Terraform ${{ matrix.terraform }}'
+    name: 'Acceptance: GLPI ${{ matrix.glpi }}, Terraform ${{ matrix.terraform }}'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
+        glpi:
+          - '10.0'
+          - '11.0'
         terraform:
           - '1.13.*'
           - '1.14.*'
@@ -73,6 +76,8 @@ jobs:
           terraform_wrapper: false
       - run: go mod download
       - name: Start GLPI
+        env:
+          GLPI_VERSION: ${{ matrix.glpi }}
         run: testenv/bootstrap.sh > "$RUNNER_TEMP/glpi.env"
       - name: Run acceptance tests
         run: |

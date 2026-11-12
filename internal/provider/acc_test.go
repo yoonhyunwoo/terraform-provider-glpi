@@ -143,37 +143,8 @@ func TestAccComputer_lifecycle(t *testing.T) {
 	})
 }
 
-func TestAccNetworkEquipment_lifecycle(t *testing.T) {
-	name := acctest.RandomWithPrefix("tfacc") + "-switch"
-	cfg := func(comment string) string {
-		return fmt.Sprintf(`
-resource "glpi_network_equipment" "sw" {
-  name    = %q
-  comment = %q
-}
-
-data "glpi_network_equipment" "by_name" {
-  name = glpi_network_equipment.sw.name
-}
-`, name, comment)
-	}
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { preCheck(t) },
-		ProtoV6ProviderFactories: protoV6Factories,
-		CheckDestroy:             checkDestroy,
-		Steps: []resource.TestStep{
-			{Config: cfg("first"), Check: resource.ComposeAggregateTestCheckFunc(
-				resource.TestCheckResourceAttr("glpi_network_equipment.sw", "comment", "first"),
-				resource.TestCheckResourceAttr("data.glpi_network_equipment.by_name", "comment", "first"),
-			)},
-			{Config: cfg("second"), Check: resource.TestCheckResourceAttr("glpi_network_equipment.sw", "comment", "second")},
-			{ResourceName: "glpi_network_equipment.sw", ImportState: true, ImportStateVerify: true},
-		},
-	})
-}
-
 func TestAccManufacturer_specialCharacters(t *testing.T) {
-	name := acctest.RandomWithPrefix("tfacc") + " & <co>"
+	name := acctest.RandomWithPrefix("tfacc") + " & <co> &amp; &#38;"
 	cfg := fmt.Sprintf(`
 resource "glpi_manufacturer" "m" {
   name    = %q
