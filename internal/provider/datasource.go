@@ -98,7 +98,7 @@ func (d *itemDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 
 func (d *itemDataSource) byID(ctx context.Context, raw string) (glpi.Item, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	id, err := parseID(raw)
+	id, err := d.spec.parseItemID(raw)
 	if err != nil {
 		diags.AddAttributeError(path.Root("id"), "Invalid ID", err.Error())
 		return nil, diags

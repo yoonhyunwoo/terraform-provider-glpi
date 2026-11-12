@@ -41,8 +41,10 @@ func newFieldsFixture(t *testing.T, c *glpi.Client) fieldsFixture {
 	}
 	t.Cleanup(func() {
 		fresh := accClient(t)
-		if err := fresh.Delete(ctx, "Computer", fx.computerID); err != nil {
-			t.Logf("cleanup computer: %v", err)
+		if fx.computerID != 0 {
+			if err := fresh.Delete(ctx, "Computer", fx.computerID); err != nil {
+				t.Logf("cleanup computer: %v", err)
+			}
 		}
 		if err := fresh.Delete(ctx, fieldsContainerItemtype, fx.containerID); err != nil {
 			t.Logf("cleanup container: %v", err)
@@ -186,7 +188,27 @@ func TestAccFieldsValuesRejectsFieldsGLPIWouldDrop(t *testing.T) {
   values       = {}
 }
 `,
-				ExpectError: regexp.MustCompile(`(?s)Writing Fields values|Not Found|ITEM_NOT_FOUND`),
+				ExpectError: regexp.MustCompile(`container 99999: the container does not exist or does not apply`),
+			},
+		},
+	})
+}
+
+func TestAccFieldsValuesDestroyToleratesARemovedContainer(t *testing.T) {
+	c := accClient(t)
+	fx := newFieldsFixture(t, c)
+	values := fmt.Sprintf(`    %s = "x"`, fx.names["product"])
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: specFactories,
+		Steps: []resource.TestStep{
+			{Config: fx.config(values)},
+			{
+				PreConfig: func() {
+					if err := accClient(t).Delete(context.Background(), fieldsContainerItemtype, fx.containerID); err != nil {
+						t.Fatalf("removing the container: %v", err)
+					}
+				},
+				Config: `provider "glpi" {}`,
 			},
 		},
 	})

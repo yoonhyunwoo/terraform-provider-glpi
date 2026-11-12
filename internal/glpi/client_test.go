@@ -293,3 +293,59 @@ func TestListReturnsEveryRow(t *testing.T) {
 		t.Fatalf("got %v, %v", rows, err)
 	}
 }
+
+func TestFailedVersionLookupIsRetriedAndNotCached(t *testing.T) {
+	var configCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/initSession":
+			_, _ = w.Write([]byte(`{"session_token":"s"}`))
+		case "/getGlpiConfig":
+			if configCalls.Add(1) == 1 {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			_, _ = w.Write([]byte(`{"cfg_glpi":{"version":"11.0.12"}}`))
+		default:
+			_, _ = w.Write([]byte(`{"id":1,"name":"a &#38; b"}`))
+		}
+	}))
+	defer srv.Close()
+	c := New(Config{BaseURL: srv.URL, UserToken: "u"})
+	first, err := c.Get(context.Background(), "Location", 1)
+	if err != nil || first["name"] != "a & b" {
+		t.Fatalf("while the version is unknown GLPI 10 behavior applies: got %v, %v", first["name"], err)
+	}
+	second, err := c.Get(context.Background(), "Location", 1)
+	if err != nil || second["name"] != "a &#38; b" {
+		t.Fatalf("after the lookup succeeds GLPI 11 text is left alone: got %v, %v", second["name"], err)
+	}
+	if major, _ := c.ServerMajor(context.Background()); major != 11 || configCalls.Load() != 2 {
+		t.Fatalf("major %d after %d lookups, want 11 after 2", major, configCalls.Load())
+	}
+}
+
+func TestVersionLookupStopsAfterAFewFailures(t *testing.T) {
+	var configCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/initSession":
+			_, _ = w.Write([]byte(`{"session_token":"s"}`))
+		case "/getGlpiConfig":
+			configCalls.Add(1)
+			w.WriteHeader(http.StatusForbidden)
+		default:
+			_, _ = w.Write([]byte(`{"id":1}`))
+		}
+	}))
+	defer srv.Close()
+	c := New(Config{BaseURL: srv.URL, UserToken: "u"})
+	for i := 0; i < 10; i++ {
+		if _, err := c.Get(context.Background(), "Location", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if configCalls.Load() != maxMajorTries {
+		t.Fatalf("%d version lookups, want %d", configCalls.Load(), maxMajorTries)
+	}
+}

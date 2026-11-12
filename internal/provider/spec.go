@@ -36,7 +36,9 @@ type itemSpec struct {
 	desc     string
 	// dataOnly specs are exposed as data sources only.
 	dataOnly bool
-	fields   []field
+	// zeroID marks an itemtype whose item with ID 0 exists, the root entity.
+	zeroID bool
+	fields []field
 	// prepare adds the input GLPI derives from several attributes, such as an IP network's CIDR.
 	prepare func(in glpi.Item)
 }
@@ -332,8 +334,8 @@ var itemSpecs = []itemSpec{
 			ref("item_id", "items_id", "Computer", "ID of the item the information belongs to.").req().fixed(),
 			str("buy_date", "Purchase date as YYYY-MM-DD."),
 			str("use_date", "Date the item entered service as YYYY-MM-DD."),
-			dec("value", "Purchase value."),
-			dec("warranty_value", "Warranty value."),
+			dec("value", "Purchase value. GLPI keeps four decimals."),
+			dec("warranty_value", "Warranty value. GLPI keeps four decimals."),
 			num("warranty_duration", "Warranty duration in months."),
 			num("sink_time", "Depreciation period in years."),
 			num("sink_type", "Depreciation method as GLPI numbers it: 0 none, 2 linear, 3 degressive."),
@@ -408,6 +410,7 @@ var itemSpecs = []itemSpec{
 		tfName:   "entity",
 		desc:     "GLPI entity.",
 		dataOnly: true,
+		zeroID:   true,
 		fields:   []field{nameField, commentField, completeField},
 	},
 	{
@@ -465,7 +468,10 @@ func addCIDR(in glpi.Item) {
 	if address == "" || mask == nil {
 		return
 	}
-	ones, _ := net.IPMask(mask).Size()
+	ones, bits := net.IPMask(mask).Size()
+	if bits == 0 {
+		return
+	}
 	in["network"] = address + "/" + strconv.Itoa(ones)
 }
 

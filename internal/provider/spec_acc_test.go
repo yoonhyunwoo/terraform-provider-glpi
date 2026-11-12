@@ -343,54 +343,44 @@ func TestAccDataOnlySpecsLookUpItems(t *testing.T) {
 			continue
 		}
 		t.Run(spec.tfName, func(t *testing.T) {
-			name, id := dataOnlyTarget(t, c, spec, suffix)
+			name, id, byID := dataOnlyTarget(t, c, spec, suffix)
 			addr := "data.glpi_" + spec.tfName
+			cfg := fmt.Sprintf("data %q \"by_name\" {\n  name = %q\n}\n", "glpi_"+spec.tfName, name)
+			checks := []resource.TestCheckFunc{
+				resource.TestCheckResourceAttr(addr+".by_name", "name", name),
+				resource.TestCheckResourceAttrSet(addr+".by_name", "id"),
+			}
+			if byID {
+				cfg += fmt.Sprintf("data %q \"by_id\" {\n  id = %q\n}\n", "glpi_"+spec.tfName, strconv.FormatInt(id, 10))
+				checks = append(checks, resource.TestCheckResourceAttr(addr+".by_id", "name", name))
+			}
 			resource.Test(t, resource.TestCase{
 				ProtoV6ProviderFactories: specFactories,
-				Steps: []resource.TestStep{{
-					Config: fmt.Sprintf(`
-data "glpi_%[1]s" "by_name" {
-  name = %[2]q
-}
-`, spec.tfName, name) + func() string {
-						if id == 0 {
-							return ""
-						}
-						return fmt.Sprintf(`
-data "glpi_%[1]s" "by_id" {
-  id = %[2]q
-}
-`, spec.tfName, strconv.FormatInt(id, 10))
-					}(),
-					Check: resource.ComposeAggregateTestCheckFunc(
-						resource.TestCheckResourceAttr(addr+".by_name", "name", name),
-						resource.TestCheckResourceAttrSet(addr+".by_name", "id"),
-					),
-				}},
+				Steps:                    []resource.TestStep{{Config: cfg, Check: resource.ComposeAggregateTestCheckFunc(checks...)}},
 			})
 		})
 	}
 }
 
 // dataOnlyTarget returns the name of an item the data source can find, creating a catalog entry
-// when the instance has none. The root entity has ID 0, which only the name lookup can address.
-func dataOnlyTarget(t *testing.T, c *glpi.Client, spec itemSpec, suffix string) (string, int64) {
+// when the instance has none. byID reports whether the item can also be looked up by ID.
+func dataOnlyTarget(t *testing.T, c *glpi.Client, spec itemSpec, suffix string) (name string, id int64, byID bool) {
 	t.Helper()
 	ctx := context.Background()
 	switch spec.itemtype {
 	case "User":
-		return "glpi", 0
+		return "glpi", 0, false
 	case "Entity":
-		return "Root entity", 0
+		return "Root entity", 0, true
 	}
 	nameCol, _ := spec.nameField()
-	name := "tfacc-" + suffix + "-" + strings.ToLower(spec.itemtype)
+	name = "tfacc-" + suffix + "-" + strings.ToLower(spec.itemtype)
 	id, err := c.Create(ctx, spec.itemtype, glpi.Item{nameCol.api: name})
 	if err != nil {
 		t.Fatalf("creating %s: %v", spec.itemtype, err)
 	}
 	t.Cleanup(func() { _ = c.Delete(ctx, spec.itemtype, id) })
-	return name, id
+	return name, id, true
 }
 
 // TestAccNewerColumnsAreRejectedOnOlderGLPI checks that an attribute GLPI 10 has no column for fails

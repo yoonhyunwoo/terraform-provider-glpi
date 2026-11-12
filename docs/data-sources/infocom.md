@@ -40,6 +40,6 @@ data "glpi_infocom" "example" {
 - `sink_time` (Number) Depreciation period in years.
 - `sink_type` (Number) Depreciation method as GLPI numbers it: 0 none, 2 linear, 3 degressive.
 - `use_date` (String) Date the item entered service as YYYY-MM-DD.
-- `value` (Number) Purchase value.
+- `value` (Number) Purchase value. GLPI keeps four decimals.
 - `warranty_duration` (Number) Warranty duration in months.
-- `warranty_value` (Number) Warranty value.
+- `warranty_value` (Number) Warranty value. GLPI keeps four decimals.

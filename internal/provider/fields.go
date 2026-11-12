@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -149,7 +150,7 @@ func (d *fieldsContainerDataSource) Schema(_ context.Context, _ datasource.Schem
 			"active":     datasourceschema.BoolAttribute{Computed: true, Description: "Whether the container is active."},
 			"fields": datasourceschema.ListNestedAttribute{
 				Computed:    true,
-				Description: "Fields of the container, ordered by name. Only the types text, textarea, richtext, number, url, date, datetime and yesno can be managed with glpi_plugin_fields_values.",
+				Description: "Fields of the container, ordered by name. The provider reads at most 1,001 fields across all containers. Only the types text, textarea, richtext, number, url, date, datetime and yesno can be managed with glpi_plugin_fields_values.",
 				NestedObject: datasourceschema.NestedAttributeObject{Attributes: map[string]datasourceschema.Attribute{
 					"name":      datasourceschema.StringAttribute{Computed: true, Description: "Key GLPI uses for the field's value."},
 					"label":     datasourceschema.StringAttribute{Computed: true, Description: "Label of the field."},
@@ -293,7 +294,7 @@ func (r *fieldsValuesResource) Schema(_ context.Context, _ resource.SchemaReques
 			"values": resourceschema.MapAttribute{
 				Required:    true,
 				ElementType: types.StringType,
-				Description: "Field name to value. Dates are YYYY-MM-DD, date times YYYY-MM-DD HH:MM:SS and yes/no fields 0 or 1. GLPI rewrites some numbers, for example 12,5 to 12.5, so write them the way GLPI stores them.",
+				Description: "Field name to value. Dates are YYYY-MM-DD, date times YYYY-MM-DD HH:MM:SS and yes/no fields 0 or 1. GLPI rewrites some values, for example 12,5 to 12.5, so write them the way GLPI stores them; the apply fails when the stored value differs from the planned one.",
 			},
 		},
 	}
@@ -315,8 +316,14 @@ func fieldsValuesID(itemtype string, itemID, containerID int64) string {
 	return itemtype + "/" + strconv.FormatInt(itemID, 10) + "/" + strconv.FormatInt(containerID, 10)
 }
 
+// errContainerNotApplicable means the container no longer exists or no longer applies to the itemtype.
+var errContainerNotApplicable = errors.New("the container does not exist or does not apply to the itemtype")
+
 func (r *fieldsValuesResource) container(ctx context.Context, containerID int64, itemtype string) (fieldsContainer, error) {
 	row, err := r.client.Get(ctx, fieldsContainerItemtype, containerID)
+	if glpi.IsNotFound(err) {
+		return fieldsContainer{}, fmt.Errorf("container %d: %w", containerID, errContainerNotApplicable)
+	}
 	if err != nil {
 		return fieldsContainer{}, err
 	}
@@ -325,7 +332,7 @@ func (r *fieldsValuesResource) container(ctx context.Context, containerID int64,
 		return fieldsContainer{}, err
 	}
 	if !slices.Contains(ct.itemtypes, itemtype) {
-		return fieldsContainer{}, fmt.Errorf("container %q applies to %v, not %s", ct.label, ct.itemtypes, itemtype)
+		return fieldsContainer{}, fmt.Errorf("container %q applies to %v, not %s: %w", ct.label, ct.itemtypes, itemtype, errContainerNotApplicable)
 	}
 	return ct, nil
 }
@@ -352,6 +359,21 @@ func (ct fieldsContainer) emptyValue(name string) string {
 		return "0"
 	}
 	return ""
+}
+
+// emptied maps the keys GLPI lets the provider empty to their empty value and lists the keys it cannot
+// empty, which are read-only or mandatory fields.
+func (ct fieldsContainer) emptied(keys []string) (map[string]string, []string) {
+	out := map[string]string{}
+	var kept []string
+	for _, k := range keys {
+		if f, ok := ct.field(k); !ok || f.readOnly || f.mandatory {
+			kept = append(kept, k)
+			continue
+		}
+		out[k] = ct.emptyValue(k)
+	}
+	return out, kept
 }
 
 func (r *fieldsValuesResource) write(ctx context.Context, itemtype string, itemID int64, ct fieldsContainer, values map[string]string) error {
@@ -392,6 +414,13 @@ func mapKeys(m map[string]string) []string {
 // stored what was planned.
 func (r *fieldsValuesResource) apply(ctx context.Context, plan fieldsValuesModel, prior map[string]string) (map[string]string, error) {
 	itemtype, itemID, cid := plan.ItemType.ValueString(), plan.ItemID.ValueInt64(), plan.ContainerID.ValueInt64()
+	major, err := r.client.ServerMajor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if major != 0 && major < 11 {
+		return nil, fmt.Errorf("the server runs GLPI %d; writing Fields values needs GLPI 11.0.2 or later", major)
+	}
 	ct, err := r.container(ctx, cid, itemtype)
 	if err != nil {
 		return nil, err
@@ -404,11 +433,14 @@ func (r *fieldsValuesResource) apply(ctx context.Context, plan fieldsValuesModel
 		return nil, err
 	}
 	send := maps.Clone(want)
+	var dropped []string
 	for k := range prior {
 		if _, kept := want[k]; !kept {
-			send[k] = ct.emptyValue(k)
+			dropped = append(dropped, k)
 		}
 	}
+	emptied, _ := ct.emptied(dropped)
+	maps.Copy(send, emptied)
 	if err := r.write(ctx, itemtype, itemID, ct, send); err != nil {
 		return nil, err
 	}
@@ -483,6 +515,10 @@ func (r *fieldsValuesResource) Read(ctx context.Context, req resource.ReadReques
 		return
 	}
 	ct, err := r.container(ctx, cid, itemtype)
+	if errors.Is(err, errContainerNotApplicable) {
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Reading Fields container", err.Error())
 		return
@@ -515,15 +551,22 @@ func (r *fieldsValuesResource) Delete(ctx context.Context, req resource.DeleteRe
 		return
 	}
 	ct, err := r.container(ctx, state.ContainerID.ValueInt64(), itemtype)
+	if errors.Is(err, errContainerNotApplicable) {
+		return
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Reading Fields container", err.Error())
 		return
 	}
 	managed := map[string]string{}
 	resp.Diagnostics.Append(state.Values.ElementsAs(ctx, &managed, false)...)
-	emptied := map[string]string{}
-	for k := range managed {
-		emptied[k] = ct.emptyValue(k)
+	emptied, kept := ct.emptied(mapKeys(managed))
+	if len(kept) > 0 {
+		resp.Diagnostics.AddWarning("Some Fields values were left in place",
+			fmt.Sprintf("GLPI does not let the provider empty the read-only or mandatory fields %s.", strings.Join(kept, ", ")))
+	}
+	if len(emptied) == 0 {
+		return
 	}
 	if err := r.write(ctx, itemtype, itemID, ct, emptied); err != nil {
 		resp.Diagnostics.AddError("Emptying Fields values", err.Error())

@@ -41,7 +41,7 @@ resource "glpi_plugin_fields_values" "db" {
 - `container_id` (Number) ID of the Fields container, from the glpi_plugin_fields_container data source.
 - `item_id` (Number) ID of the item that holds the values.
 - `item_type` (String) GLPI itemtype of the item that holds the values, for example Computer.
-- `values` (Map of String) Field name to value. Dates are YYYY-MM-DD, date times YYYY-MM-DD HH:MM:SS and yes/no fields 0 or 1. GLPI rewrites some numbers, for example 12,5 to 12.5, so write them the way GLPI stores them.
+- `values` (Map of String) Field name to value. Dates are YYYY-MM-DD, date times YYYY-MM-DD HH:MM:SS and yes/no fields 0 or 1. GLPI rewrites some values, for example 12,5 to 12.5, so write them the way GLPI stores them; the apply fails when the stored value differs from the planned one.
 
 ### Read-Only
 

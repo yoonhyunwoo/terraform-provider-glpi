@@ -214,6 +214,14 @@ func isGone(item glpi.Item, err error) bool {
 	return glpi.IsNotFound(err) || (err == nil && isTrashed(item))
 }
 
+// parseItemID is parseID that also accepts "0" for the itemtype whose first item has that ID.
+func (s itemSpec) parseItemID(raw string) (int64, error) {
+	if s.zeroID && raw == "0" {
+		return 0, nil
+	}
+	return parseID(raw)
+}
+
 func parseID(s string) (int64, error) {
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil || n <= 0 || strconv.FormatInt(n, 10) != s {

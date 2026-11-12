@@ -125,6 +125,7 @@ func TestAddCIDRDerivesThePrefixLengthGLPIRequires(t *testing.T) {
 		{"v6 /64", "2001:db8::", "ffff:ffff:ffff:ffff::", "2001:db8::/64"},
 		{"missing netmask", "10.0.0.0", "", ""},
 		{"unparsable netmask", "10.0.0.0", "abc", ""},
+		{"non-contiguous netmask", "10.0.0.0", "255.0.255.0", ""},
 		{"missing address", "", "255.0.0.0", ""},
 	}
 	for _, c := range cases {
@@ -180,5 +181,18 @@ func TestCheckVersionRejectsOnlyConfiguredAttributesTheServerLacks(t *testing.T)
 		if len(diags.Errors()) != wantErrors {
 			t.Errorf("GLPI %d: %d errors, want %d: %v", major, len(diags.Errors()), wantErrors, diags)
 		}
+	}
+}
+
+func TestParseItemIDAcceptsZeroOnlyForTheRootEntity(t *testing.T) {
+	root, other := itemSpec{zeroID: true}, itemSpec{}
+	if id, err := root.parseItemID("0"); err != nil || id != 0 {
+		t.Errorf("root entity: %d, %v", id, err)
+	}
+	if _, err := other.parseItemID("0"); err == nil {
+		t.Error("0 accepted for an itemtype without an ID 0")
+	}
+	if id, err := root.parseItemID("7"); err != nil || id != 7 {
+		t.Errorf("ordinary ID on the root entity spec: %d, %v", id, err)
 	}
 }

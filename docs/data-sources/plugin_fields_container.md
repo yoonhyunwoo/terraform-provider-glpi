@@ -33,7 +33,7 @@ output "field_names" {
 ### Read-Only
 
 - `active` (Boolean) Whether the container is active.
-- `fields` (Attributes List) Fields of the container, ordered by name. Only the types text, textarea, richtext, number, url, date, datetime and yesno can be managed with glpi_plugin_fields_values. (see [below for nested schema](#nestedatt--fields))
+- `fields` (Attributes List) Fields of the container, ordered by name. The provider reads at most 1,001 fields across all containers. Only the types text, textarea, richtext, number, url, date, datetime and yesno can be managed with glpi_plugin_fields_values. (see [below for nested schema](#nestedatt--fields))
 - `item_types` (List of String) GLPI itemtypes the container applies to.
 - `name` (String) Internal name GLPI generated from the label.
 - `type` (String) Where the container appears: dom, tab or domtab.

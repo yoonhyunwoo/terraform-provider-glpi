@@ -40,9 +40,10 @@ type Client struct {
 	mu      sync.Mutex
 	session string
 
-	// major is the server's major version, 0 when the server did not report one. GLPI 10 and older
+	// major is the server's major version, 0 until the server reported one. GLPI 10 and older
 	// store &, < and > as numeric entities; GLPI 11 stores and returns the text unchanged.
-	major int
+	major      int
+	majorTries int
 }
 
 type APIError struct {
@@ -242,7 +243,6 @@ func (c *Client) sessionToken(ctx context.Context, stale string) (string, error)
 		return "", err
 	}
 	c.session = tok
-	c.major = c.serverMajor(ctx, tok)
 	return tok, nil
 }
 
@@ -271,11 +271,34 @@ func (c *Client) serverMajor(ctx context.Context, tok string) int {
 	return n
 }
 
+// maxMajorTries bounds how often a request retries a failed version lookup, so a server that never
+// answers does not add a request to every call.
+const maxMajorTries = 3
+
+// learnMajor asks the server for its version until it answers. A lookup that fails is not cached as
+// "unknown", because an unknown version makes the client treat text like a GLPI 10 server would.
+func (c *Client) learnMajor(ctx context.Context, tok string) {
+	c.mu.Lock()
+	if c.major != 0 || c.majorTries >= maxMajorTries {
+		c.mu.Unlock()
+		return
+	}
+	c.majorTries++
+	c.mu.Unlock()
+	if m := c.serverMajor(ctx, tok); m != 0 {
+		c.mu.Lock()
+		c.major = m
+		c.mu.Unlock()
+	}
+}
+
 // ServerMajor returns the GLPI major version, or 0 when the server does not report it.
 func (c *Client) ServerMajor(ctx context.Context) (int, error) {
-	if _, err := c.sessionToken(ctx, ""); err != nil {
+	tok, err := c.sessionToken(ctx, "")
+	if err != nil {
 		return 0, err
 	}
+	c.learnMajor(ctx, tok)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.major, nil
@@ -310,6 +333,7 @@ func (c *Client) attempt(ctx context.Context, method, path string, query url.Val
 	if err != nil {
 		return "", err
 	}
+	c.learnMajor(ctx, tok)
 	u := c.cfg.BaseURL + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()

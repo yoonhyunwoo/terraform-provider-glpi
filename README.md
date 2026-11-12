@@ -4,7 +4,7 @@ Terraform provider for [GLPI](https://github.com/glpi-project/glpi) assets, buil
 
 ## Coverage
 
-Every resource has a data source of the same name that looks an item up by `id` or exact `name`. Prefix each name below with `glpi_`.
+Every resource has a data source of the same name that looks an item up by `id`, or by exact `name` for items that have one (`rack_item` and `infocom` have none). Prefix each name below with `glpi_`.
 
 | Area | Resources and data sources |
 |---|---|
