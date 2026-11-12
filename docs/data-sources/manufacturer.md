@@ -33,4 +33,3 @@ data "glpi_manufacturer" "by_id" {
 ### Read-Only
 
 - `comment` (String) Free-form comment.
-- `entity_id` (Number) ID of the entity that owns the item. 0 is the root entity.

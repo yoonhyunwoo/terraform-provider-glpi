@@ -28,7 +28,6 @@ resource "glpi_manufacturer" "fortinet" {
 ### Optional
 
 - `comment` (String) Free-form comment.
-- `entity_id` (Number) ID of the entity that owns the item. 0 is the root entity.
 
 ### Read-Only
 

@@ -48,6 +48,7 @@ resource "glpi_computer" "build_agent" {
 - `serial` (String) Serial number.
 - `state_id` (Number) ID of the status.
 - `type_id` (Number) ID of the item type.
+- `uuid` (String) UUID of the machine.
 
 ### Read-Only
 

@@ -42,3 +42,4 @@ data "glpi_computer" "by_id" {
 - `serial` (String) Serial number.
 - `state_id` (Number) ID of the status.
 - `type_id` (Number) ID of the item type.
+- `uuid` (String) UUID of the machine.

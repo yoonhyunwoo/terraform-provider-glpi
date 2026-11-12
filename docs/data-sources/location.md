@@ -32,7 +32,19 @@ data "glpi_location" "by_id" {
 
 ### Read-Only
 
+- `address` (String) Street address.
+- `alias` (String) Location alias. Needs GLPI 11 or later.
+- `altitude` (String) Altitude.
+- `building` (String) Building number or name.
+- `code` (String) Location code. Needs GLPI 11 or later.
 - `comment` (String) Free-form comment.
-- `completename` (String) Full path of the location, computed by GLPI.
+- `completename` (String) Full path of the item in its tree, computed by GLPI.
+- `country` (String) Country.
 - `entity_id` (Number) ID of the entity that owns the item. 0 is the root entity.
-- `parent_id` (Number) ID of the parent location. 0 means top level.
+- `latitude` (String) Latitude.
+- `longitude` (String) Longitude.
+- `parent_id` (Number) ID of the parent. 0 means top level.
+- `postcode` (String) Postal code.
+- `room` (String) Room number or name.
+- `state` (String) State or province.
+- `town` (String) Town.
