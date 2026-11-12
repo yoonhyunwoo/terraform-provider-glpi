@@ -25,22 +25,34 @@ func (d *itemDataSource) Metadata(_ context.Context, req datasource.MetadataRequ
 }
 
 func (d *itemDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
-	attrs := map[string]schema.Attribute{
-		"id": schema.StringAttribute{Optional: true, Computed: true, Description: "GLPI numeric ID. Set id or name."},
+	_, hasName := d.spec.nameField()
+	idDesc := "GLPI numeric ID."
+	idAttr := schema.StringAttribute{Required: true, Description: idDesc}
+	if hasName {
+		idAttr = schema.StringAttribute{Optional: true, Computed: true, Description: idDesc + " Set id or name."}
 	}
+	attrs := map[string]schema.Attribute{"id": idAttr}
 	for _, f := range d.spec.fields {
 		optional := f.tf == "name"
-		desc := f.desc
+		desc := f.description()
 		if optional {
 			desc += " Set id or name; must match exactly one item."
 		}
-		if f.kind == kindInt {
-			attrs[f.tf] = schema.Int64Attribute{Optional: optional, Computed: true, Description: desc}
-		} else {
-			attrs[f.tf] = schema.StringAttribute{Optional: optional, Computed: true, Description: desc}
-		}
+		attrs[f.tf] = dataSourceAttribute(f, optional, desc)
 	}
 	resp.Schema = schema.Schema{Description: "Look up a " + d.spec.desc, Attributes: attrs}
+}
+
+func dataSourceAttribute(f field, optional bool, desc string) schema.Attribute {
+	switch f.kind {
+	case kindInt:
+		return schema.Int64Attribute{Optional: optional, Computed: true, Description: desc}
+	case kindBool:
+		return schema.BoolAttribute{Optional: optional, Computed: true, Description: desc}
+	case kindFloat:
+		return schema.Float64Attribute{Optional: optional, Computed: true, Description: desc}
+	}
+	return schema.StringAttribute{Optional: optional, Computed: true, Description: desc}
 }
 
 func (d *itemDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
@@ -56,13 +68,16 @@ func (d *itemDataSource) Configure(_ context.Context, req datasource.ConfigureRe
 }
 
 func (d *itemDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	_, hasName := d.spec.nameField()
 	var id, name types.String
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("id"), &id)...)
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("name"), &name)...)
+	if hasName {
+		resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("name"), &name)...)
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if id.IsNull() == name.IsNull() {
+	if hasName && id.IsNull() == name.IsNull() {
 		resp.Diagnostics.AddError("Invalid lookup", "Set exactly one of id or name.")
 		return
 	}
@@ -83,7 +98,7 @@ func (d *itemDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 
 func (d *itemDataSource) byID(ctx context.Context, raw string) (glpi.Item, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	id, err := parseID(raw)
+	id, err := d.spec.parseItemID(raw)
 	if err != nil {
 		diags.AddAttributeError(path.Root("id"), "Invalid ID", err.Error())
 		return nil, diags
@@ -101,7 +116,8 @@ func (d *itemDataSource) byID(ctx context.Context, raw string) (glpi.Item, diag.
 
 func (d *itemDataSource) byName(ctx context.Context, name string) (glpi.Item, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	found, err := d.client.FindByName(ctx, d.spec.itemtype, name)
+	nameCol, _ := d.spec.nameField()
+	found, err := d.client.FindByName(ctx, d.spec.itemtype, nameCol.api, name)
 	if err != nil {
 		diags.AddError("Searching "+d.spec.itemtype, err.Error())
 		return nil, diags

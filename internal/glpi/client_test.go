@@ -12,12 +12,20 @@ import (
 
 func newServer(t *testing.T, inits *atomic.Int32, h http.HandlerFunc) *Client {
 	t.Helper()
+	return newVersionedServer(t, "10.0.28", inits, h)
+}
+
+func newVersionedServer(t *testing.T, version string, inits *atomic.Int32, h http.HandlerFunc) *Client {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/initSession" {
+		switch r.URL.Path {
+		case "/initSession":
 			_, _ = w.Write([]byte(`{"session_token":"s` + strconv.Itoa(int(inits.Add(1))) + `"}`))
-			return
+		case "/getGlpiConfig":
+			_, _ = w.Write([]byte(`{"cfg_glpi":{"version":"` + version + `"}}`))
+		default:
+			h(w, r)
 		}
-		h(w, r)
 	}))
 	t.Cleanup(srv.Close)
 	return New(Config{BaseURL: srv.URL, UserToken: "u", AppToken: "app"})
@@ -170,7 +178,7 @@ func TestFindByNameKeepsOnlyExactMatches(t *testing.T) {
 	c := newServer(t, &inits, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`[{"id":1,"name":"web"},{"id":2,"name":"web-02"},{"id":3,"name":"web"}]`))
 	})
-	got, err := c.FindByName(context.Background(), "Computer", "web")
+	got, err := c.FindByName(context.Background(), "Computer", "name", "web")
 	if err != nil || len(got) != 2 {
 		t.Fatalf("got %v, %v", got, err)
 	}
@@ -208,5 +216,136 @@ func TestSearchSegmentAvoidsCharactersGLPIEscapes(t *testing.T) {
 		if got := searchSegment(in); got != want {
 			t.Errorf("%q: got %q want %q", in, got, want)
 		}
+	}
+}
+
+func TestFindByNameUsesTheGivenColumn(t *testing.T) {
+	var inits atomic.Int32
+	var gotQuery string
+	c := newServer(t, &inits, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("searchText[designation]")
+		_, _ = w.Write([]byte(`[{"id":1,"designation":"Xeon"},{"id":2,"designation":"Xeon Gold","name":"Xeon"}]`))
+	})
+	got, err := c.FindByName(context.Background(), "DeviceProcessor", "designation", "Xeon")
+	if err != nil || len(got) != 1 || gotQuery != "Xeon" {
+		t.Fatalf("got %v, %v, query %q", got, err, gotQuery)
+	}
+}
+
+func TestEntitiesAreUnescapedOnlyOnGLPI10(t *testing.T) {
+	for version, want := range map[string]string{
+		"10.0.28": "R&D <team>",
+		"11.0.12": "R&#38;D &#60;team&#62;",
+	} {
+		var inits atomic.Int32
+		c := newVersionedServer(t, version, &inits, func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"id":1,"name":"R&#38;D &#60;team&#62;"}`))
+		})
+		item, err := c.Get(context.Background(), "Location", 1)
+		if err != nil || item["name"] != want {
+			t.Errorf("GLPI %s: got %v, %v want %q", version, item["name"], err, want)
+		}
+	}
+}
+
+func TestUnknownServerVersionKeepsGLPI10Behavior(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/initSession":
+			_, _ = w.Write([]byte(`{"session_token":"s"}`))
+		case "/getGlpiConfig":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`["ERROR_RIGHT_MISSING","no"]`))
+		default:
+			_, _ = w.Write([]byte(`{"id":1,"name":"a &#38; b"}`))
+		}
+	}))
+	defer srv.Close()
+	item, err := New(Config{BaseURL: srv.URL, UserToken: "u"}).Get(context.Background(), "Location", 1)
+	if err != nil || item["name"] != "a & b" {
+		t.Fatalf("got %v, %v", item["name"], err)
+	}
+}
+
+func TestSubItemsReadsTheNestedCollection(t *testing.T) {
+	var inits atomic.Int32
+	var gotPath string
+	c := newServer(t, &inits, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`[{"id":9,"items_id":5,"note":"x &#38; y"}]`))
+	})
+	rows, err := c.SubItems(context.Background(), "Computer", 5, "PluginFieldsComputerabc")
+	if err != nil || len(rows) != 1 || gotPath != "/Computer/5/PluginFieldsComputerabc" || rows[0]["note"] != "x & y" {
+		t.Fatalf("got %v, %v, path %q", rows, err, gotPath)
+	}
+}
+
+func TestListReturnsEveryRow(t *testing.T) {
+	var inits atomic.Int32
+	c := newServer(t, &inits, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/PluginFieldsContainer" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[{"id":1,"label":"a &#38; b"},{"id":2,"label":"c"}]`))
+	})
+	rows, err := c.List(context.Background(), "PluginFieldsContainer")
+	if err != nil || len(rows) != 2 || rows[0]["label"] != "a & b" {
+		t.Fatalf("got %v, %v", rows, err)
+	}
+}
+
+func TestFailedVersionLookupIsRetriedAndNotCached(t *testing.T) {
+	var configCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/initSession":
+			_, _ = w.Write([]byte(`{"session_token":"s"}`))
+		case "/getGlpiConfig":
+			if configCalls.Add(1) == 1 {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			_, _ = w.Write([]byte(`{"cfg_glpi":{"version":"11.0.12"}}`))
+		default:
+			_, _ = w.Write([]byte(`{"id":1,"name":"a &#38; b"}`))
+		}
+	}))
+	defer srv.Close()
+	c := New(Config{BaseURL: srv.URL, UserToken: "u"})
+	first, err := c.Get(context.Background(), "Location", 1)
+	if err != nil || first["name"] != "a & b" {
+		t.Fatalf("while the version is unknown GLPI 10 behavior applies: got %v, %v", first["name"], err)
+	}
+	second, err := c.Get(context.Background(), "Location", 1)
+	if err != nil || second["name"] != "a &#38; b" {
+		t.Fatalf("after the lookup succeeds GLPI 11 text is left alone: got %v, %v", second["name"], err)
+	}
+	if major, _ := c.ServerMajor(context.Background()); major != 11 || configCalls.Load() != 2 {
+		t.Fatalf("major %d after %d lookups, want 11 after 2", major, configCalls.Load())
+	}
+}
+
+func TestVersionLookupStopsAfterAFewFailures(t *testing.T) {
+	var configCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/initSession":
+			_, _ = w.Write([]byte(`{"session_token":"s"}`))
+		case "/getGlpiConfig":
+			configCalls.Add(1)
+			w.WriteHeader(http.StatusForbidden)
+		default:
+			_, _ = w.Write([]byte(`{"id":1}`))
+		}
+	}))
+	defer srv.Close()
+	c := New(Config{BaseURL: srv.URL, UserToken: "u"})
+	for i := 0; i < 10; i++ {
+		if _, err := c.Get(context.Background(), "Location", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if configCalls.Load() != maxMajorTries {
+		t.Fatalf("%d version lookups, want %d", configCalls.Load(), maxMajorTries)
 	}
 }
