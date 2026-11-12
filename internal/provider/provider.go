@@ -162,9 +162,12 @@ func resolvePurge(diags *diag.Diagnostics, configured types.Bool) bool {
 func (p *glpiProvider) Resources(context.Context) []func() resource.Resource {
 	out := make([]func() resource.Resource, 0, len(itemSpecs))
 	for _, s := range itemSpecs {
+		if s.dataOnly {
+			continue
+		}
 		out = append(out, func() resource.Resource { return &itemResource{spec: s} })
 	}
-	return out
+	return append(out, func() resource.Resource { return &fieldsValuesResource{} })
 }
 
 func (p *glpiProvider) DataSources(context.Context) []func() datasource.DataSource {
@@ -172,5 +175,5 @@ func (p *glpiProvider) DataSources(context.Context) []func() datasource.DataSour
 	for _, s := range itemSpecs {
 		out = append(out, func() datasource.DataSource { return &itemDataSource{spec: s} })
 	}
-	return out
+	return append(out, func() datasource.DataSource { return &fieldsContainerDataSource{} })
 }

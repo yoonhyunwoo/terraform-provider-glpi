@@ -1,11 +1,14 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/yoonhyunwoo/terraform-provider-glpi/internal/glpi"
@@ -14,6 +17,8 @@ import (
 func TestStateValueNormalisesGLPIQuirks(t *testing.T) {
 	str := field{api: "serial", kind: kindString}
 	num := field{api: "locations_id", kind: kindInt}
+	flg := field{api: "is_valid", kind: kindBool}
+	dcm := field{api: "value", kind: kindFloat}
 	cases := []struct {
 		name string
 		f    field
@@ -23,7 +28,13 @@ func TestStateValueNormalisesGLPIQuirks(t *testing.T) {
 		{"null string becomes empty", str, nil, types.StringValue("")},
 		{"string passes through", str, "SN1", types.StringValue("SN1")},
 		{"number in string field", str, json.Number("7"), types.StringValue("7")},
-		{"GLPI 10.0 stores &, < and > as entities", str, "R&#38;D &#60;team&#62;", types.StringValue("R&D <team>")},
+		{"text is never altered", str, "R&#38;D <team>", types.StringValue("R&#38;D <team>")},
+		{"null bool is false", flg, nil, types.BoolValue(false)},
+		{"json number bool", flg, json.Number("1"), types.BoolValue(true)},
+		{"quoted zero bool", flg, "0", types.BoolValue(false)},
+		{"null decimal is zero", dcm, nil, types.Float64Value(0)},
+		{"quoted decimal", dcm, "49170000.0000", types.Float64Value(49170000)},
+		{"json number decimal", dcm, json.Number("12.5"), types.Float64Value(12.5)},
 		{"null int becomes zero", num, nil, types.Int64Value(0)},
 		{"empty-string int becomes zero", num, "", types.Int64Value(0)},
 		{"quoted int", num, "12", types.Int64Value(12)},
@@ -102,5 +113,72 @@ func TestOrEnvTreatsEmptyAsUnset(t *testing.T) {
 	}
 	if got := orEnv(types.StringValue("cfg"), "GLPI_TEST_VAR"); got != "cfg" {
 		t.Errorf("configured value lost: %q", got)
+	}
+}
+
+func TestAddCIDRDerivesThePrefixLengthGLPIRequires(t *testing.T) {
+	cases := []struct {
+		name, address, netmask, want string
+	}{
+		{"v4 /23", "192.168.50.0", "255.255.254.0", "192.168.50.0/23"},
+		{"v4 /8", "10.0.0.0", "255.0.0.0", "10.0.0.0/8"},
+		{"v6 /64", "2001:db8::", "ffff:ffff:ffff:ffff::", "2001:db8::/64"},
+		{"missing netmask", "10.0.0.0", "", ""},
+		{"unparsable netmask", "10.0.0.0", "abc", ""},
+		{"missing address", "", "255.0.0.0", ""},
+	}
+	for _, c := range cases {
+		in := glpi.Item{"address": c.address, "netmask": c.netmask}
+		addCIDR(in)
+		got, _ := in["network"].(string)
+		if got != c.want {
+			t.Errorf("%s: network %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestDetachedByDefaultKeepsOwnersTheCallerSet(t *testing.T) {
+	in := glpi.Item{"name": "n"}
+	detachedByDefault(in)
+	if in["itemtype"] != "" || in["items_id"] != 0 {
+		t.Errorf("owner columns not defaulted: %v", in)
+	}
+	owned := glpi.Item{"itemtype": "Computer", "items_id": int64(5)}
+	detachedByDefault(owned)
+	if owned["itemtype"] != "Computer" || owned["items_id"] != int64(5) {
+		t.Errorf("explicit owner overwritten: %v", owned)
+	}
+}
+
+func TestCheckVersionRejectsOnlyConfiguredAttributesTheServerLacks(t *testing.T) {
+	var spec itemSpec
+	for _, s := range itemSpecs {
+		if s.itemtype == "Location" {
+			spec = s
+		}
+	}
+	configured := map[string]bool{"code": true}
+	get := func(_ context.Context, p path.Path, target any) diag.Diagnostics {
+		set := configured[p.String()]
+		switch v := target.(type) {
+		case *types.String:
+			*v = types.StringNull()
+			if set {
+				*v = types.StringValue("x")
+			}
+		case *types.Int64:
+			*v = types.Int64Null()
+		case *types.Bool:
+			*v = types.BoolNull()
+		case *types.Float64:
+			*v = types.Float64Null()
+		}
+		return nil
+	}
+	for major, wantErrors := range map[int]int{10: 1, 11: 0, 0: 0} {
+		diags := spec.checkVersion(context.Background(), major, get)
+		if len(diags.Errors()) != wantErrors {
+			t.Errorf("GLPI %d: %d errors, want %d: %v", major, len(diags.Errors()), wantErrors, diags)
+		}
 	}
 }

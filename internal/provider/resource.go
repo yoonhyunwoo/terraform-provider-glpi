@@ -9,6 +9,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/float64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -41,26 +43,54 @@ func (r *itemResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 		},
 	}
 	for _, f := range r.spec.fields {
-		optional := !f.required && !f.readOnly
-		computed := !f.required
-		if f.kind == kindInt {
-			a := schema.Int64Attribute{Required: f.required, Optional: optional, Computed: computed, Description: f.desc}
-			if optional {
-				a.PlanModifiers = []planmodifier.Int64{int64planmodifier.UseStateForUnknown()}
-			}
-			attrs[f.tf] = a
-			continue
-		}
-		a := schema.StringAttribute{Required: f.required, Optional: optional, Computed: computed, Description: f.desc}
-		if optional {
-			a.PlanModifiers = []planmodifier.String{stringplanmodifier.UseStateForUnknown()}
-		}
-		attrs[f.tf] = a
+		attrs[f.tf] = resourceAttribute(f)
 	}
 	resp.Schema = schema.Schema{
 		Description: r.spec.desc,
 		Attributes:  attrs,
 	}
+}
+
+func resourceAttribute(f field) schema.Attribute {
+	optional := !f.required && !f.readOnly
+	computed := !f.required
+	switch f.kind {
+	case kindInt:
+		a := schema.Int64Attribute{Required: f.required, Optional: optional, Computed: computed, Description: f.description()}
+		if optional {
+			a.PlanModifiers = append(a.PlanModifiers, int64planmodifier.UseStateForUnknown())
+		}
+		if f.immutable {
+			a.PlanModifiers = append(a.PlanModifiers, int64planmodifier.RequiresReplace())
+		}
+		return a
+	case kindBool:
+		a := schema.BoolAttribute{Required: f.required, Optional: optional, Computed: computed, Description: f.description()}
+		if optional {
+			a.PlanModifiers = append(a.PlanModifiers, boolplanmodifier.UseStateForUnknown())
+		}
+		if f.immutable {
+			a.PlanModifiers = append(a.PlanModifiers, boolplanmodifier.RequiresReplace())
+		}
+		return a
+	case kindFloat:
+		a := schema.Float64Attribute{Required: f.required, Optional: optional, Computed: computed, Description: f.description()}
+		if optional {
+			a.PlanModifiers = append(a.PlanModifiers, float64planmodifier.UseStateForUnknown())
+		}
+		if f.immutable {
+			a.PlanModifiers = append(a.PlanModifiers, float64planmodifier.RequiresReplace())
+		}
+		return a
+	}
+	a := schema.StringAttribute{Required: f.required, Optional: optional, Computed: computed, Description: f.description()}
+	if optional {
+		a.PlanModifiers = append(a.PlanModifiers, stringplanmodifier.UseStateForUnknown())
+	}
+	if f.immutable {
+		a.PlanModifiers = append(a.PlanModifiers, stringplanmodifier.RequiresReplace())
+	}
+	return a
 }
 
 func (r *itemResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -75,7 +105,17 @@ func (r *itemResource) Configure(_ context.Context, req resource.ConfigureReques
 	r.client = c
 }
 
+func (r *itemResource) checkColumns(ctx context.Context, get func(context.Context, path.Path, any) diag.Diagnostics, diags *diag.Diagnostics) {
+	major, err := r.client.ServerMajor(ctx)
+	if err != nil {
+		diags.AddError("Reaching GLPI", err.Error())
+		return
+	}
+	diags.Append(r.spec.checkVersion(ctx, major, get)...)
+}
+
 func (r *itemResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	r.checkColumns(ctx, req.Config.GetAttribute, &resp.Diagnostics)
 	input, diags := r.spec.apiInput(ctx, req.Plan.GetAttribute)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
@@ -113,6 +153,7 @@ func (r *itemResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if !ok {
 		return
 	}
+	r.checkColumns(ctx, req.Config.GetAttribute, &resp.Diagnostics)
 	input, diags := r.spec.apiInput(ctx, req.Plan.GetAttribute)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
