@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-11-12)
 
 * GLPI 11.0 is supported. The provider reads the server version and unescapes HTML entities only on GLPI 10.0 and older, where GLPI stores `&`, `<` and `>` as entities. On GLPI 11 the earlier behavior altered text that contained sequences such as `&amp;`.
 * New resources and data sources: `glpi_peripheral`, `glpi_datacenter`, `glpi_datacenter_room`, `glpi_rack`, `glpi_rack_item`, `glpi_state`, `glpi_group`, `glpi_computer_type`, `glpi_rack_type`, `glpi_rack_model`, `glpi_operating_system`, `glpi_operating_system_version`, `glpi_software`, `glpi_software_version`, `glpi_software_license`, `glpi_software_license_type`, `glpi_software_category`, `glpi_infocom`, `glpi_network`, `glpi_ip_network`, `glpi_network_name` and `glpi_ip_address`.
